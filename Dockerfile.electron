@@ -1,0 +1,64 @@
+# Multi-stage build for AI Interview Assistant
+FROM node:18-alpine AS builder
+
+# Install build dependencies
+RUN apk add --no-cache python3 make g++ git
+
+WORKDIR /build
+
+# Copy package files
+COPY package*.json ./
+COPY forge.config.ts ./
+
+# Install all dependencies (including dev dependencies)
+RUN npm ci
+
+# Copy source code
+COPY . .
+
+# Build the application
+RUN npm run package
+
+# Production stage
+FROM node:18-alpine AS production
+
+# Install runtime dependencies for Electron
+RUN apk add --no-cache \
+    chromium \
+    nss \
+    freetype \
+    harfbuzz \
+    ca-certificates \
+    ttf-freefont \
+    nodejs \
+    npm \
+    xvfb \
+    && rm -rf /var/cache/apk/*
+
+# Set up display for headless environment
+ENV DISPLAY=:99
+ENV NODE_ENV=production
+
+WORKDIR /app
+
+# Copy built application from builder stage
+COPY --from=builder /build/out /app/out
+COPY --from=builder /build/package.json /app/package.json
+
+# Create startup script for headless environment
+RUN echo '#!/bin/sh' > /app/start.sh && \
+    echo 'echo "Starting AI Interview Assistant in Docker..."' >> /app/start.sh && \
+    echo 'Xvfb :99 -screen 0 1024x768x24 > /dev/null 2>&1 &' >> /app/start.sh && \
+    echo 'sleep 2' >> /app/start.sh && \
+    echo 'cd /app/out' >> /app/start.sh && \
+    echo 'exec node main.js' >> /app/start.sh && \
+    chmod +x /app/start.sh
+
+# Health check endpoint
+EXPOSE 3000
+
+# Volume for data persistence
+VOLUME ["/app/data"]
+
+# Start the application
+CMD ["/app/start.sh"]

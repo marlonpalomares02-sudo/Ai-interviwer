@@ -1,0 +1,27 @@
+# Simple web server for testing the realtime transcription
+FROM node:18-alpine AS web-builder
+
+WORKDIR /app
+
+# Copy web test files
+COPY realtime-test.html ./
+COPY package*.json ./
+
+# Create a simple Express server to serve the HTML
+RUN echo 'const express = require("express");' > server.js && \
+    echo 'const app = express();' >> server.js && \
+    echo 'const path = require("path");' >> server.js && \
+    echo 'app.use(express.static("."));' >> server.js && \
+    echo 'app.get("/", (req, res) => {' >> server.js && \
+    echo '  res.sendFile(path.join(__dirname, "realtime-test.html"));' >> server.js && \
+    echo '});' >> server.js && \
+    echo 'const PORT = process.env.PORT || 80;' >> server.js && \
+    echo 'app.listen(PORT, () => {' >> server.js && \
+    echo '  console.log(`Web test server running on port ${PORT}`);' >> server.js && \
+    echo '});' >> server.js
+
+RUN npm install express
+
+EXPOSE 80
+
+CMD ["node", "server.js"]

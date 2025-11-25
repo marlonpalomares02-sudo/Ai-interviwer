@@ -1,0 +1,50 @@
+version: '3.8'
+
+services:
+  ai-interview-assistant:
+    build:
+      context: .
+      dockerfile: Dockerfile.electron
+    container_name: ai-interview-assistant
+    ports:
+      - "3000:3000"
+      - "8080:8080"
+    environment:
+      - NODE_ENV=production
+      - DEEPGRAM_API_KEY=${DEEPGRAM_API_KEY}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+      - DISPLAY=:99
+    volumes:
+      - ./data:/app/data
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+    networks:
+      - ai-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Optional: Web interface for testing
+  web-test:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    container_name: ai-interview-web-test
+    ports:
+      - "8081:80"
+    depends_on:
+      - ai-interview-assistant
+    networks:
+      - ai-network
+    restart: unless-stopped
+
+networks:
+  ai-network:
+    driver: bridge
+
+volumes:
+  ai-data:
+    driver: local
