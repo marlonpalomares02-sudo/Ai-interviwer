@@ -21,7 +21,7 @@ const KnowledgeBaseContext = createContext<KnowledgeBaseContextType | undefined>
 export const KnowledgeBaseProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [knowledgeBase, setKnowledgeBase] = useState<string[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [displayedAiResult, setDisplayedAiResult] = useState("");
+  const [displayedAiResult, setDisplayedAiResult] = useState('');
 
   useEffect(() => {
     const savedKnowledgeBase = localStorage.getItem('knowledgeBase');
@@ -43,11 +43,11 @@ export const KnowledgeBaseProvider: React.FC<{ children: ReactNode }> = ({ child
   }, [conversations]);
 
   const addToKnowledgeBase = (content: string) => {
-    setKnowledgeBase(prev => [...prev, content]);
+    setKnowledgeBase((prev) => [...prev, content]);
   };
 
   const addConversation = (conversation: Conversation) => {
-    setConversations(prev => [...prev, conversation]);
+    setConversations((prev) => [...prev, conversation]);
   };
 
   const clearConversations = () => {

@@ -6,9 +6,26 @@ const Navigation: React.FC = () => {
     <nav className="bg-base-200 p-2 shadow-md">
       <div className="container mx-auto flex justify-center">
         <ul className="flex space-x-2">
-          <li><Link to="/main_window" className="btn btn-ghost btn-sm">Interview</Link></li>
-          <li><Link to="/knowledge" className="btn btn-ghost btn-sm">Knowledge Base</Link></li>
-          <li><Link to="/settings" className="btn btn-ghost btn-sm">Settings</Link></li>
+          <li>
+            <Link to="/main_window" className="btn btn-ghost btn-sm">
+              Interview
+            </Link>
+          </li>
+          <li>
+            <Link to="/knowledge" className="btn btn-ghost btn-sm">
+              Knowledge Base
+            </Link>
+          </li>
+          <li>
+            <Link to="/settings" className="btn btn-ghost btn-sm">
+              Settings
+            </Link>
+          </li>
+          <li>
+            <Link to="/realtime-demo" className="btn btn-ghost btn-sm">
+              Real-Time Demo
+            </Link>
+          </li>
         </ul>
       </div>
     </nav>

@@ -1,0 +1,7 @@
+streamlit
+requests
+pydantic-ai
+langgraph
+langchain
+pydantic
+httpx

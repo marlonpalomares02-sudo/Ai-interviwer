@@ -14,9 +14,9 @@ interface InterviewContextType {
 const InterviewContext = createContext<InterviewContextType | undefined>(undefined);
 
 export const InterviewProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [currentText, setCurrentText] = useState("");
-  const [aiResult, setAiResult] = useState("");
-  const [displayedAiResult, setDisplayedAiResult] = useState("");
+  const [currentText, setCurrentText] = useState('');
+  const [aiResult, setAiResult] = useState('');
+  const [displayedAiResult, setDisplayedAiResult] = useState('');
   const [lastProcessedIndex, setLastProcessedIndex] = useState(0);
 
   return (
