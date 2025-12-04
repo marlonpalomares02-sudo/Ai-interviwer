@@ -322,6 +322,7 @@ import ElectronStore from 'electron-store';
 
 interface StoreSchema {
   config: Record<string, any>;
+  promptTemplates?: { name: string; prompt: string }[];
 }
 
 type TypedElectronStore = ElectronStore<StoreSchema> & {
@@ -338,6 +339,14 @@ ipcMain.handle('get-config', () => {
 
 ipcMain.handle('set-config', (event, config) => {
   store.set('config', config);
+});
+
+ipcMain.handle('get-prompt-templates', () => {
+  return store.get('promptTemplates') || [];
+});
+
+ipcMain.handle('set-prompt-templates', (event, templates) => {
+  store.set('promptTemplates', templates);
 });
 
 ipcMain.handle('parsePDF', async (event, pdfBuffer) => {
@@ -458,32 +467,56 @@ app.on('ready', () => {
 
 ipcMain.handle('test-api-config', async (event, config) => {
   try {
-    console.log('Testing API config with:', {
-      api_base: config.deepseek_api_base,
-      model: config.deepseek_model,
-      key_length: config.deepseek_api_key ? config.deepseek_api_key.length : 0,
-    });
+    const selectedProvider = config.selected_provider || 'deepseek';
+    console.log('Testing API config for provider:', selectedProvider);
 
-    const baseUrl = normalizeApiBaseUrl(config.deepseek_api_base, 'https://api.deepseek.com/v1');
-    console.log('Normalized base URL:', baseUrl);
+    if (selectedProvider === 'gemini') {
+      if (!config.gemini_api_key) {
+        return { success: false, error: 'Gemini API Key is missing' };
+      }
 
-    const axiosInstance = axios.create({
-      baseURL: baseUrl,
-      headers: {
-        Authorization: `Bearer ${config.deepseek_api_key}`,
-        'Content-Type': 'application/json',
-      },
-    });
+      const { GoogleGenerativeAI } = require('@google/generative-ai');
+      const genAI = new GoogleGenerativeAI(config.gemini_api_key);
+      const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
 
-    const response = await axiosInstance.post('/chat/completions', {
-      model: config.deepseek_model || 'deepseek-chat',
-      messages: [{ role: 'user', content: 'Hello, this is a test.' }],
-    });
+      const result = await model.generateContent('Hello, this is a test.');
+      const response = await result.response;
+      const text = response.text();
 
-    if (response.data.choices && response.data.choices[0] && response.data.choices[0].message) {
-      return { success: true };
+      if (text) {
+        return { success: true };
+      } else {
+        return { success: false, error: 'Unexpected Gemini API response structure' };
+      }
     } else {
-      return { success: false, error: 'Unexpected API response structure' };
+      // DeepSeek test
+      console.log('Testing API config with:', {
+        api_base: config.deepseek_api_base,
+        model: config.deepseek_model,
+        key_length: config.deepseek_api_key ? config.deepseek_api_key.length : 0,
+      });
+
+      const baseUrl = normalizeApiBaseUrl(config.deepseek_api_base, 'https://api.deepseek.com/v1');
+      console.log('Normalized base URL:', baseUrl);
+
+      const axiosInstance = axios.create({
+        baseURL: baseUrl,
+        headers: {
+          Authorization: `Bearer ${config.deepseek_api_key}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      const response = await axiosInstance.post('/chat/completions', {
+        model: config.deepseek_model || 'deepseek-chat',
+        messages: [{ role: 'user', content: 'Hello, this is a test.' }],
+      });
+
+      if (response.data.choices && response.data.choices[0] && response.data.choices[0].message) {
+        return { success: true };
+      } else {
+        return { success: false, error: 'Unexpected API response structure' };
+      }
     }
   } catch (error) {
     console.error('API test error:', error);
@@ -550,30 +583,69 @@ ipcMain.handle('callOpenAI', async (event, { config, messages, signal }) => {
 
 ipcMain.handle('callDeepSeek', async (event, { config, messages }) => {
   try {
-    const deepseekApi = axios.create({
-      baseURL: normalizeApiBaseUrl(config.deepseek_api_base, 'https://api.deepseek.com/v1'),
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${config.deepseek_api_key}`,
-      },
-    });
+    const selectedProvider = config.selected_provider || 'deepseek';
+    
+    if (selectedProvider === 'gemini') {
+      if (!config.gemini_api_key) {
+        throw new Error('Gemini API Key is missing');
+      }
 
-    const response = await deepseekApi.post('/chat/completions', {
-      model: config.deepseek_model || 'deepseek-chat',
-      messages: messages,
-    });
+      const { GoogleGenerativeAI } = require('@google/generative-ai');
+      const genAI = new GoogleGenerativeAI(config.gemini_api_key);
+      const model = genAI.getGenerativeModel({ 
+        model: 'gemini-1.5-flash',
+        systemInstruction: messages.find((m: any) => m.role === 'system')?.content || ''
+      });
 
-    if (!response.data.choices || !response.data.choices[0] || !response.data.choices[0].message) {
-      throw new Error('Unexpected API response structure from DeepSeek');
+      // Convert messages to Gemini format
+      // Filter out system message as it's handled above
+      // Combine consecutive user/assistant messages if needed, but Gemini handles history well
+      const history = messages
+        .filter((m: any) => m.role !== 'system')
+        .slice(0, -1) // All except last message
+        .map((m: any) => ({
+          role: m.role === 'assistant' ? 'model' : 'user',
+          parts: [{ text: m.content }],
+        }));
+
+      const chat = model.startChat({
+        history: history,
+      });
+
+      const lastMessage = messages[messages.length - 1];
+      const result = await chat.sendMessage(lastMessage.content);
+      const response = await result.response;
+      const text = response.text();
+
+      return { content: text };
+    } else {
+      // Existing DeepSeek logic
+      const deepseekApi = axios.create({
+        baseURL: normalizeApiBaseUrl(config.deepseek_api_base, 'https://api.deepseek.com/v1'),
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${config.deepseek_api_key}`,
+        },
+      });
+
+      const response = await deepseekApi.post('/chat/completions', {
+        model: config.deepseek_model || 'deepseek-chat',
+        messages: messages,
+      });
+
+      if (!response.data.choices || !response.data.choices[0] || !response.data.choices[0].message) {
+        throw new Error('Unexpected API response structure from DeepSeek');
+      }
+      return { content: response.data.choices[0].message.content };
     }
-    return { content: response.data.choices[0].message.content };
   } catch (error) {
+    console.error('AI Call Error:', error);
     if (axios.isAxiosError(error)) {
       return {
-        error: `DeepSeek API Error: ${error.response?.status} - ${error.response?.data?.message || error.message}`,
+        error: `API Error: ${error.response?.status} - ${error.response?.data?.message || error.message}`,
       };
     }
-    return { error: error.message || 'Unknown error occurred with DeepSeek API' };
+    return { error: error.message || 'Unknown error occurred with AI API' };
   }
 });
 
@@ -627,7 +699,7 @@ ipcMain.handle('start-deepgram', async (event, config) => {
     deepgramConnection = deepgram.listen.live({
       punctuate: true,
       interim_results: true,
-      model: 'general',
+      model: 'nova-2-general',
       language: config.primaryLanguage || 'en',
       encoding: 'linear16',
       sample_rate: 16000,
@@ -635,7 +707,7 @@ ipcMain.handle('start-deepgram', async (event, config) => {
       vad_events: true,
       // Add enhanced settings for better screenshare transcription
       smart_format: true,
-      filler_words: false,
+      filler_words: true,
       profanity_filter: false,
       // Better handling of audio with gaps (common in screenshare)
       interim_results_timeout: 3000,

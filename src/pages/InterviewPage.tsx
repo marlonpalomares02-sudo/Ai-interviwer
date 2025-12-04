@@ -32,8 +32,22 @@ import {
   FaEyeSlash,
   FaKeyboard,
   FaWindowRestore,
+  FaLightbulb,
 } from 'react-icons/fa';
 import '../styles/enhanced-ui.css';
+
+interface TranscriptSegment {
+  id: string;
+  text: string;
+  timestamp: number;
+  isProcessed: boolean;
+}
+
+interface AiResponseSegment {
+  id: string;
+  text: string;
+  timestamp: number;
+}
 
 const InterviewPage: React.FC = () => {
   const { knowledgeBase, conversations, addConversation, clearConversations } = useKnowledgeBase();
@@ -60,6 +74,41 @@ const InterviewPage: React.FC = () => {
   const aiResponseRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const transcriptionRef = useRef<HTMLTextAreaElement>(null);
+
+  // Segment-based state for auto-deletion
+  const [transcriptSegments, setTranscriptSegments] = useState<TranscriptSegment[]>([]);
+  const [aiResponseSegments, setAiResponseSegments] = useState<AiResponseSegment[]>([]);
+  const transcriptSegmentsRef = useRef<TranscriptSegment[]>([]);
+  
+  // Sync ref with state
+  useEffect(() => {
+    transcriptSegmentsRef.current = transcriptSegments;
+  }, [transcriptSegments]);
+
+  // Auto-delete old content (older than 3 minutes)
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const now = Date.now();
+      const expiry = 3 * 60 * 1000; // 3 minutes
+
+      setTranscriptSegments((prev) => {
+        const next = prev.filter((s) => now - s.timestamp < expiry);
+        return next.length !== prev.length ? next : prev;
+      });
+
+      setAiResponseSegments((prev) => {
+        const next = prev.filter((s) => now - s.timestamp < expiry);
+        return next.length !== prev.length ? next : prev;
+      });
+    }, 5000); // Check every 5 seconds
+
+    return () => clearInterval(interval);
+  }, []);
+
+  // Sync segments to display context
+  useEffect(() => {
+    setDisplayedAiResult(aiResponseSegments.map((s) => s.text).join('\n\n---\n\n'));
+  }, [aiResponseSegments, setDisplayedAiResult]);
 
   const [showScreenSharePicker, setShowScreenSharePicker] = useState(false);
   const [recordingType, setRecordingType] = useState<'audio' | 'screen' | null>(null);
@@ -145,7 +194,23 @@ const InterviewPage: React.FC = () => {
   `;
 
   const handleAskDeepSeek = async (newContent?: string) => {
-    const contentToProcess = newContent || currentText.slice(lastProcessedIndex).trim();
+    let contentToProcess = newContent;
+    
+    // If no specific content provided, gather unprocessed segments
+    if (!contentToProcess) {
+      const unprocessed = transcriptSegmentsRef.current.filter(s => !s.isProcessed);
+      if (unprocessed.length > 0) {
+        contentToProcess = unprocessed.map(s => s.text).join(' ');
+        // Mark as processed
+        setTranscriptSegments(prev => 
+          prev.map(s => unprocessed.some(u => u.id === s.id) ? { ...s, isProcessed: true } : s)
+        );
+      } else {
+        // Fallback to raw currentText slice if no segments (legacy/interim) or empty
+        contentToProcess = currentText.slice(lastProcessedIndex).trim();
+      }
+    }
+
     if (!contentToProcess) return;
 
     setIsLoading(true);
@@ -163,8 +228,8 @@ const InterviewPage: React.FC = () => {
       // Add knowledge base items
       messages.push(...knowledgeBase.map((item) => ({ role: 'user', content: item })));
 
-      // Add conversation history
-      messages.push(...conversations);
+      // Add conversation history (limit to last 6 messages for speed)
+      messages.push(...conversations.slice(-6));
 
       // Add current user content
       messages.push({ role: 'user', content: contentToProcess });
@@ -182,7 +247,13 @@ const InterviewPage: React.FC = () => {
       const formattedResponse = response.content.trim();
       addConversation({ role: 'user', content: contentToProcess });
       addConversation({ role: 'assistant', content: formattedResponse });
-      setDisplayedAiResult((prev) => prev + (prev ? '\n\n' : '') + formattedResponse);
+      
+      // Add to timed segments
+      setAiResponseSegments(prev => [
+        ...prev,
+        { id: crypto.randomUUID(), text: formattedResponse, timestamp: Date.now() }
+      ]);
+      
       setLastProcessedIndex(currentText.length);
 
       // Send AI response to PiP window
@@ -201,6 +272,65 @@ const InterviewPage: React.FC = () => {
     }
   };
 
+  const handleGenerateSmartQuestions = async () => {
+    setIsLoading(true);
+    try {
+      const config = await window.electronAPI.getConfig();
+
+      const smartQuestionsPrompt = `
+        Based on the interview context below (if any), generate 5-7 smart, strategic questions that a Senior Digital Marketing Specialist (Google/Meta Ads Expert) should ask this client right now.
+        
+        Focus specifically on uncovering missing details about:
+        1. Specific KPIs and Success Metrics (ROAS, CPA, CLV, etc.)
+        2. Total Media Budget & Allocation details
+        3. Primary Business Goals (Lead Gen vs E-comm vs Brand Awareness)
+        4. Current/Past Bidding Strategies
+        5. Account History (How long they've been running ads, past performance issues)
+        
+        Format the output as a clean, bulleted list of questions.
+        
+        Transcription Context:
+        ${currentText ? currentText.slice(Math.max(0, currentText.length - 4000)) : "No interview transcription yet. Provide general best-practice discovery questions."}
+      `;
+
+      const messages = [
+        { role: 'system', content: "You are an expert Digital Marketing Consultant assisting in a client meeting. Your goal is to ask high-impact questions that demonstrate senior-level expertise." },
+        { role: 'user', content: smartQuestionsPrompt }
+      ];
+
+      const response = await window.electronAPI.callDeepSeek({
+        config: config,
+        messages: messages,
+      });
+
+      if ('error' in response) {
+        throw new Error(response.error);
+      }
+
+      const formattedResponse = `### 💡 Smart Strategy Questions:\n\n${response.content.trim()}`;
+      
+      setAiResponseSegments(prev => [
+        ...prev,
+        { id: crypto.randomUUID(), text: formattedResponse, timestamp: Date.now() }
+      ]);
+      
+      // Send to PiP
+      try {
+        await window.electronAPI.ipcRenderer.invoke('update-pip-content', formattedResponse);
+      } catch (error) {
+        console.log('Failed to update PiP window:', error);
+      }
+
+    } catch (error) {
+      setError('Failed to generate smart questions. Please try again.');
+    } finally {
+      setIsLoading(false);
+      if (aiResponseRef.current) {
+        aiResponseRef.current.scrollTop = aiResponseRef.current.scrollHeight;
+      }
+    }
+  };
+
   const handleAskDeepSeekStable = useCallback(
     async (newContent: string) => {
       await handleAskDeepSeek(newContent);
@@ -208,8 +338,13 @@ const InterviewPage: React.FC = () => {
     [handleAskDeepSeek]
   );
 
-  const [stableTranscript, setStableTranscript] = useState('');
   const [interimTranscript, setInterimTranscript] = useState('');
+
+  // Sync transcript segments to display context
+  useEffect(() => {
+    const text = transcriptSegments.map((s) => s.text).join(' ');
+    setCurrentText(text + (interimTranscript ? ' ' + interimTranscript : ''));
+  }, [transcriptSegments, interimTranscript, setCurrentText]);
 
   useEffect(() => {
     let lastTranscriptTime = Date.now();
@@ -227,7 +362,15 @@ const InterviewPage: React.FC = () => {
       console.log(`Deepgram transcript: "${newTranscript}" (is_final: ${data.is_final})`);
 
       if (data.is_final) {
-        setStableTranscript((prev) => prev + newTranscript + ' ');
+        setTranscriptSegments((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            text: newTranscript,
+            timestamp: Date.now(),
+            isProcessed: false,
+          },
+        ]);
         setInterimTranscript('');
         lastTranscriptTime = Date.now();
         console.log('Final transcript updated:', newTranscript);
@@ -238,20 +381,29 @@ const InterviewPage: React.FC = () => {
     };
 
     const checkAndSubmit = () => {
-      if (isDeepSeekChatEnabled && Date.now() - lastTranscriptTime >= 2000) {
-        const newContent = stableTranscript.slice(lastProcessedIndex);
-        if (newContent.trim()) {
-          handleAskDeepSeekStable(newContent);
+      // Reduced latency: 600ms silence threshold for near real-time response
+      if (isDeepSeekChatEnabled && Date.now() - lastTranscriptTime >= 600) {
+        const unprocessed = transcriptSegmentsRef.current.filter((s) => !s.isProcessed);
+        if (unprocessed.length > 0) {
+          const newContent = unprocessed.map((s) => s.text).join(' ');
+          if (newContent.trim()) {
+            // Mark processed
+            setTranscriptSegments((prev) =>
+              prev.map((s) => (unprocessed.some((u) => u.id === s.id) ? { ...s, isProcessed: true } : s))
+            );
+            handleAskDeepSeekStable(newContent);
+          }
         }
       }
-      checkTimer = setTimeout(checkAndSubmit, 1000);
+      // Check more frequently (every 200ms) to catch the threshold quickly
+      checkTimer = setTimeout(checkAndSubmit, 200);
     };
 
     const removeListener = window.electronAPI.ipcRenderer.on(
       'deepgram-transcript',
       handleDeepgramTranscript
     );
-    checkTimer = setTimeout(checkAndSubmit, 1000);
+    checkTimer = setTimeout(checkAndSubmit, 200);
 
     return () => {
       removeListener();
@@ -259,16 +411,9 @@ const InterviewPage: React.FC = () => {
     };
   }, [
     isDeepSeekChatEnabled,
-    lastProcessedIndex,
-    stableTranscript,
     handleAskDeepSeekStable,
-    setStableTranscript,
     setInterimTranscript,
   ]);
-
-  useEffect(() => {
-    setCurrentText(stableTranscript + interimTranscript);
-  }, [stableTranscript, interimTranscript, setCurrentText]);
 
   const startRecording = async (type: 'audio' | 'screen') => {
     setRecordingType(type);
@@ -947,11 +1092,20 @@ const InterviewPage: React.FC = () => {
               <span>{isLoading ? 'Thinking...' : 'Ask DeepSeek'}</span>
             </button>
             <button
+              onClick={handleGenerateSmartQuestions}
+              disabled={isLoading}
+              className="btn btn-secondary flex-1 flex items-center justify-center space-x-2 transition-all duration-300 hover:scale-105 hover:shadow-lg disabled:opacity-50 pulse-on-hover bg-gradient-to-r from-yellow-500 to-orange-500 border-none text-white"
+              aria-label="Generate smart questions for client"
+            >
+              <FaLightbulb className={isLoading ? 'animate-pulse' : ''} />
+              <span>Suggest Questions</span>
+            </button>
+            <button
               onClick={() => setDisplayedAiResult('')}
               className="btn btn-ghost text-gray-300 hover:text-white hover:bg-white/10 transition-all duration-300 rounded-lg pulse-on-hover"
               aria-label="Clear AI response"
             >
-              Clear Response
+              Clear
             </button>
           </div>
         </div>

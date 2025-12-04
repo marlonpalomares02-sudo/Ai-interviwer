@@ -2,38 +2,71 @@ import React, { useState, useEffect } from 'react';
 import { useError } from '../contexts/ErrorContext';
 import ErrorDisplay from '../components/ErrorDisplay';
 import { languageOptions } from '../utils/languageOptions';
+import { FaSave, FaTrash } from 'react-icons/fa';
+
+const defaultSystemPrompt = `You are a digital marketing specialist with 10 years of experience. Your expertise covers Google Ads, Meta Ads, campaign setup, bidding strategies, keyword research, copywriting, conversion tracking (including GA4 and Google Tag), and landing page optimization.
+
+When analyzing the interview transcription:
+1. Keep answers short, sharp, and precise. No long lectures.
+2. Adopt a casual, smart, and confident tone—like a pro having a chat.
+3. Drop quick, relevant examples to show you know your stuff (e.g., "I'd check GA4 debug view first").
+4. Focus on high-impact strategies and results.`;
+
+interface PromptTemplate {
+  name: string;
+  prompt: string;
+}
 
 const Settings: React.FC = () => {
   const { error, setError, clearError } = useError();
   const [deepseekApiKey, setDeepseekApiKey] = useState('');
+  const [geminiApiKey, setGeminiApiKey] = useState('');
   const [deepseekApiBase, setDeepseekApiBase] = useState('');
   const [deepseekApiModel, setDeepseekApiModel] = useState('deepseek-chat');
+  const [selectedProvider, setSelectedProvider] = useState<'deepseek' | 'gemini'>('deepseek');
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [apiCallMethod, setApiCallMethod] = useState<'direct' | 'proxy'>('direct');
   const [testResult, setTestResult] = useState<string | null>(null);
   const [primaryLanguage, setPrimaryLanguage] = useState('auto');
   const [secondaryLanguage, setSecondaryLanguage] = useState('');
   const [deepgramApiKey, setDeepgramApiKey] = useState('');
-  const [aiSystemPrompt, setAiSystemPrompt] = useState('');
+  const [aiSystemPrompt, setAiSystemPrompt] = useState(defaultSystemPrompt);
+  
+  // Template state
+  const [templates, setTemplates] = useState<PromptTemplate[]>([]);
+  const [newTemplateName, setNewTemplateName] = useState('');
+  const [showSaveTemplate, setShowSaveTemplate] = useState(false);
 
   useEffect(() => {
     loadConfig();
+    loadTemplates();
   }, []);
 
   const loadConfig = async () => {
     try {
       const config = await window.electronAPI.getConfig();
       setDeepseekApiKey(config.deepseek_api_key || '');
+      setGeminiApiKey(config.gemini_api_key || '');
       setDeepseekApiModel(config.deepseek_model || 'deepseek-chat');
       setDeepseekApiBase(config.deepseek_api_base || '');
+      setSelectedProvider(config.selected_provider || 'deepseek');
       setApiCallMethod(config.api_call_method || 'direct');
       setPrimaryLanguage(config.primaryLanguage || 'auto');
       setSecondaryLanguage(config.secondaryLanguage || '');
       setDeepgramApiKey(config.deepgram_api_key || '');
-      setAiSystemPrompt(config.ai_system_prompt || '');
+      setAiSystemPrompt(config.ai_system_prompt || defaultSystemPrompt);
     } catch (err) {
       console.error('Failed to load configuration', err);
       setError('Failed to load configuration. Please check your settings.');
+    }
+  };
+
+  const loadTemplates = async () => {
+    try {
+      const savedTemplates = await window.electronAPI.getPromptTemplates();
+      setTemplates(savedTemplates || []);
+    } catch (err) {
+      console.error('Failed to load templates', err);
     }
   };
 
@@ -41,8 +74,10 @@ const Settings: React.FC = () => {
     try {
       await window.electronAPI.setConfig({
         deepseek_api_key: deepseekApiKey,
+        gemini_api_key: geminiApiKey,
         deepseek_model: deepseekApiModel,
         deepseek_api_base: deepseekApiBase,
+        selected_provider: selectedProvider,
         api_call_method: apiCallMethod,
         primaryLanguage: primaryLanguage,
         deepgram_api_key: deepgramApiKey,
@@ -55,18 +90,50 @@ const Settings: React.FC = () => {
     }
   };
 
+  const handleSaveTemplate = async () => {
+    if (!newTemplateName.trim()) return;
+    
+    try {
+      const newTemplates = [...templates, { name: newTemplateName, prompt: aiSystemPrompt }];
+      await window.electronAPI.setPromptTemplates(newTemplates);
+      setTemplates(newTemplates);
+      setNewTemplateName('');
+      setShowSaveTemplate(false);
+    } catch (err) {
+      setError('Failed to save template');
+    }
+  };
+
+  const handleDeleteTemplate = async (index: number) => {
+    try {
+      const newTemplates = templates.filter((_, i) => i !== index);
+      await window.electronAPI.setPromptTemplates(newTemplates);
+      setTemplates(newTemplates);
+    } catch (err) {
+      setError('Failed to delete template');
+    }
+  };
+
+  const applyTemplate = (prompt: string) => {
+    setAiSystemPrompt(prompt);
+  };
+
   const testAPIConfig = async () => {
     try {
       setTestResult('Testing...');
       console.log('Sending test-api-config request with config:', {
         deepseek_api_key: deepseekApiKey,
+        gemini_api_key: geminiApiKey,
         deepseek_model: deepseekApiModel,
         deepseek_api_base: deepseekApiBase,
+        selected_provider: selectedProvider,
       });
       const result = await window.electronAPI.testAPIConfig({
         deepseek_api_key: deepseekApiKey,
+        gemini_api_key: geminiApiKey,
         deepseek_model: deepseekApiModel,
         deepseek_api_base: deepseekApiBase,
+        selected_provider: selectedProvider,
       });
       console.log('Received test-api-config result:', result);
       if (result.success) {
@@ -87,43 +154,74 @@ const Settings: React.FC = () => {
     <div className="max-w-2xl mx-auto p-4">
       <ErrorDisplay error={error} onClose={clearError} />
       <h1 className="text-2xl font-bold mb-4">Settings</h1>
+
       <div className="mb-4">
-        <label className="label">DeepSeek API Key</label>
-        <input
-          type="password"
-          value={deepseekApiKey}
-          onChange={(e) => setDeepseekApiKey(e.target.value)}
-          className="input input-bordered w-full"
-        />
+        <label className="label">AI Provider</label>
+        <select
+          value={selectedProvider}
+          onChange={(e) => setSelectedProvider(e.target.value as 'deepseek' | 'gemini')}
+          className="select select-bordered w-full"
+        >
+          <option value="deepseek">DeepSeek Chat</option>
+          <option value="gemini">Google Gemini Flash</option>
+        </select>
       </div>
-      <div className="mb-4">
-        <label className="label">DeepSeek API Base URL (Optional)</label>
-        <input
-          type="text"
-          value={deepseekApiBase}
-          onChange={(e) => setDeepseekApiBase(e.target.value)}
-          className="input input-bordered w-full"
-        />
-        <label className="label">
-          <span className="label-text-alt">
-            Enter proxy URL if using API proxy. For example: https://your-proxy.com/v1
-          </span>
-        </label>
-      </div>
-      <div className="mb-4">
-        <label className="label">DeepSeek API Model</label>
-        <input
-          type="text"
-          value={deepseekApiModel}
-          onChange={(e) => setDeepseekApiModel(e.target.value)}
-          className="input input-bordered w-full"
-        />
-        <label className="label">
-          <span className="label-text-alt">
-            Please use a model supported by your API. Preferably deepseek-chat.
-          </span>
-        </label>
-      </div>
+
+      {selectedProvider === 'deepseek' && (
+        <>
+          <div className="mb-4">
+            <label className="label">DeepSeek API Key</label>
+            <input
+              type="password"
+              value={deepseekApiKey}
+              onChange={(e) => setDeepseekApiKey(e.target.value)}
+              className="input input-bordered w-full"
+            />
+          </div>
+          <div className="mb-4">
+            <label className="label">DeepSeek API Base URL (Optional)</label>
+            <input
+              type="text"
+              value={deepseekApiBase}
+              onChange={(e) => setDeepseekApiBase(e.target.value)}
+              className="input input-bordered w-full"
+            />
+            <label className="label">
+              <span className="label-text-alt">
+                Enter proxy URL if using API proxy. For example: https://your-proxy.com/v1
+              </span>
+            </label>
+          </div>
+          <div className="mb-4">
+            <label className="label">DeepSeek API Model</label>
+            <input
+              type="text"
+              value={deepseekApiModel}
+              onChange={(e) => setDeepseekApiModel(e.target.value)}
+              className="input input-bordered w-full"
+            />
+            <label className="label">
+              <span className="label-text-alt">
+                Please use a model supported by your API. Preferably deepseek-chat.
+              </span>
+            </label>
+          </div>
+        </>
+      )}
+
+      {selectedProvider === 'gemini' && (
+        <div className="mb-4">
+          <label className="label">Gemini API Key</label>
+          <input
+            type="password"
+            value={geminiApiKey}
+            onChange={(e) => setGeminiApiKey(e.target.value)}
+            className="input input-bordered w-full"
+            placeholder="Enter your Google Gemini API Key"
+          />
+        </div>
+      )}
+
       <div className="mb-4">
         <label className="label">API Call Method</label>
         <select
@@ -158,21 +256,81 @@ const Settings: React.FC = () => {
           ))}
         </select>
       </div>
+      
+      {/* AI System Prompt Section */}
       <div className="mb-4">
-        <label className="label">AI System Prompt</label>
+        <div className="flex justify-between items-center mb-2">
+          <label className="label font-bold">AI System Prompt</label>
+          <div className="dropdown dropdown-end">
+            <div tabIndex={0} role="button" className="btn btn-sm btn-outline">
+              Load Template
+            </div>
+            <ul tabIndex={0} className="dropdown-content z-[1] menu p-2 shadow bg-base-100 rounded-box w-52">
+              {templates.length === 0 ? (
+                <li><a className="text-gray-500">No templates saved</a></li>
+              ) : (
+                templates.map((template, index) => (
+                  <li key={index} className="flex flex-row justify-between items-center">
+                    <a onClick={() => applyTemplate(template.prompt)} className="flex-1 truncate">
+                      {template.name}
+                    </a>
+                    <button 
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteTemplate(index);
+                      }}
+                      className="btn btn-ghost btn-xs text-error"
+                    >
+                      <FaTrash />
+                    </button>
+                  </li>
+                ))
+              )}
+            </ul>
+          </div>
+        </div>
+        
         <textarea
           value={aiSystemPrompt}
           onChange={(e) => setAiSystemPrompt(e.target.value)}
           className="textarea textarea-bordered w-full h-32"
           placeholder="Enter system prompt to guide AI responses. This will be prepended to all AI conversations."
         />
-        <label className="label">
-          <span className="label-text-alt">
-            This prompt will guide the AI's behavior and response style. Use it to set specific
-            instructions for the AI assistant.
-          </span>
-        </label>
+        
+        <div className="flex justify-between items-center mt-2">
+          <label className="label">
+            <span className="label-text-alt">
+              This prompt will guide the AI's behavior and response style.
+            </span>
+          </label>
+          
+          {!showSaveTemplate ? (
+            <button 
+              onClick={() => setShowSaveTemplate(true)} 
+              className="btn btn-xs btn-outline btn-success gap-1"
+            >
+              <FaSave /> Save as Template
+            </button>
+          ) : (
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={newTemplateName}
+                onChange={(e) => setNewTemplateName(e.target.value)}
+                placeholder="Template Name"
+                className="input input-bordered input-xs w-32"
+              />
+              <button onClick={handleSaveTemplate} className="btn btn-xs btn-success">
+                Save
+              </button>
+              <button onClick={() => setShowSaveTemplate(false)} className="btn btn-xs btn-ghost">
+                Cancel
+              </button>
+            </div>
+          )}
+        </div>
       </div>
+
       <div className="flex justify-between mt-4">
         <button onClick={handleSave} className="btn btn-primary">
           Save Settings

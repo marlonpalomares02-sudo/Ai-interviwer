@@ -16,7 +16,7 @@ interface ScreenSharePickerProps {
 
 const ScreenSharePicker: React.FC<ScreenSharePickerProps> = ({ onSourceSelected, onClose }) => {
   const [sources, setSources] = useState<any[]>([]);
-  const [tab, setTab] = useState<'window' | 'screen'>('window');
+  const [tab, setTab] = useState<'browser' | 'window' | 'screen'>('browser');
   const [withAudio, setWithAudio] = useState(true);
   const [query, setQuery] = useState('');
 
@@ -36,13 +36,30 @@ const ScreenSharePicker: React.FC<ScreenSharePickerProps> = ({ onSourceSelected,
     () => sources.filter((s) => String(s.type || '').includes('screen')),
     [sources]
   );
+
+  const browserSources = useMemo(
+    () =>
+      windowSources.filter((s) =>
+        ['google chrome', 'microsoft edge', 'brave', 'firefox', 'opera'].some((browser) =>
+          s.name.toLowerCase().includes(browser)
+        )
+      ),
+    [windowSources]
+  );
+
   const filteredWindows = useMemo(
     () => windowSources.filter((s) => s.name.toLowerCase().includes(query.toLowerCase())),
     [windowSources, query]
   );
+
   const filteredScreens = useMemo(
     () => screenSources.filter((s) => s.name.toLowerCase().includes(query.toLowerCase())),
     [screenSources, query]
+  );
+
+  const filteredBrowsers = useMemo(
+    () => browserSources.filter((s) => s.name.toLowerCase().includes(query.toLowerCase())),
+    [browserSources, query]
   );
 
   return (
@@ -74,9 +91,10 @@ const ScreenSharePicker: React.FC<ScreenSharePickerProps> = ({ onSourceSelected,
         <div className="flex items-center justify-between mb-6">
           <div className="flex space-x-1 bg-black/20 rounded-xl p-1">
             <button
-              className={`flex items-center space-x-2 px-4 py-2 rounded-lg transition-all duration-300 text-gray-400 hover:text-white hover:bg-white/10 pulse-on-hover`}
-              onClick={() => onSourceSelected({ id: 'system-picker', withAudio })}
+              className={`flex items-center space-x-2 px-4 py-2 rounded-lg transition-all duration-300 ${tab === 'browser' ? 'bg-gradient-to-r from-blue-500 to-purple-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-white/10'} pulse-on-hover`}
+              onClick={() => setTab('browser')}
               aria-label="Select Browser tab"
+              aria-pressed={tab === 'browser'}
             >
               <FaChrome className="text-lg" />
               <span className="font-medium">Browser Tab</span>
@@ -132,6 +150,59 @@ const ScreenSharePicker: React.FC<ScreenSharePickerProps> = ({ onSourceSelected,
             aria-label="Search screen share sources"
           />
         </div>
+
+        {/* Browser Tab Selection */}
+        {tab === 'browser' && (
+          <div className="flex flex-col">
+            <div className="bg-blue-500/10 border border-blue-500/30 rounded-xl p-4 mb-6">
+              <div className="flex items-start space-x-3">
+                <FaChrome className="text-blue-400 text-xl mt-1" />
+                <div>
+                  <h4 className="text-blue-400 font-bold mb-1">Chrome Profiles & Tabs</h4>
+                  <p className="text-gray-300 text-sm">
+                    To share a specific tab from any Chrome profile, please <strong>move that tab to a new window</strong>. 
+                    Due to security restrictions, individual tabs are only detectable as windows.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-4 max-h-96 overflow-y-auto custom-scrollbar p-1">
+              {filteredBrowsers.map((source) => (
+                <div
+                  key={source.id}
+                  className="cursor-pointer group bg-gradient-to-br from-gray-700/50 to-gray-800/50 backdrop-blur-lg rounded-xl p-3 border border-white/10 hover:border-blue-400/50 transition-all duration-300 transform hover:scale-105 hover:shadow-xl"
+                  onClick={() => onSourceSelected({ id: source.id, withAudio })}
+                >
+                  <div className="relative mb-3 rounded-lg overflow-hidden">
+                    <img src={source.thumbnail} className="w-full h-32 object-cover" alt={source.name} />
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+                    <div className="absolute top-2 right-2 bg-black/60 backdrop-blur-md px-2 py-1 rounded text-xs text-white border border-white/10">
+                       Browser
+                    </div>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    {source.appIcon ? (
+                      <img src={source.appIcon} className="w-5 h-5 rounded" alt="icon" />
+                    ) : (
+                      <FaChrome className="text-gray-400" />
+                    )}
+                    <p className="text-white text-sm font-medium truncate flex-1" title={source.name}>{source.name}</p>
+                  </div>
+                </div>
+              ))}
+              {filteredBrowsers.length === 0 && (
+                <div className="col-span-2 md:col-span-3 text-center py-12">
+                  <div className="w-16 h-16 bg-gray-700/30 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <FaChrome className="text-2xl text-gray-400" />
+                  </div>
+                  <p className="text-gray-400 font-medium">No browser windows detected</p>
+                  <p className="text-gray-500 text-sm mt-2">Make sure your browser is open and not minimized.</p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Windows Grid */}
         {tab === 'window' && (

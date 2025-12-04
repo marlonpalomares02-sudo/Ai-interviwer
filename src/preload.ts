@@ -6,6 +6,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getScreenSources: () => ipcRenderer.invoke('get-desktop-sources'),
   getConfig: () => ipcRenderer.invoke('get-config'),
   setConfig: (config: any) => ipcRenderer.invoke('set-config', config),
+  getPromptTemplates: () => ipcRenderer.invoke('get-prompt-templates'),
+  setPromptTemplates: (templates: any) => ipcRenderer.invoke('set-prompt-templates', templates),
   testAPIConfig: (config: any) => ipcRenderer.invoke('test-api-config', config),
   parsePDF: (buffer: ArrayBuffer) => ipcRenderer.invoke('parsePDF', buffer),
   processImage: (path: string) => ipcRenderer.invoke('process-image', path),

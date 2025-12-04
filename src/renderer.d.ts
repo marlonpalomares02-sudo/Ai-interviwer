@@ -8,6 +8,8 @@ export interface ElectronAPI {
   ): TranscriptionResult | PromiseLike<TranscriptionResult>;
   getConfig: () => Promise<any>;
   setConfig: (config: any) => Promise<void>;
+  getPromptTemplates: () => Promise<{ name: string; prompt: string }[]>;
+  setPromptTemplates: (templates: { name: string; prompt: string }[]) => Promise<void>;
   testAPIConfig: (config: any) => Promise<{ success: boolean; error?: string }>;
   startRecording: () => Promise<Array<{ id: string; name: string; thumbnail: string }>>;
   parsePDF: (pdfBuffer: ArrayBuffer) => Promise<{ text: string; error?: string }>;
