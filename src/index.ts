@@ -36,14 +36,14 @@ const createWindow = (): void => {
   });
 
   // Prevent this window from being captured by screen recorders and shares
-  mainWindow.setContentProtection(true);
+  // mainWindow.setContentProtection(true); // Disabled as per user request
 
   mainWindow.webContents.session.webRequest.onHeadersReceived((details, callback) => {
     callback({
       responseHeaders: {
         ...details.responseHeaders,
         'Content-Security-Policy': [
-          "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; connect-src 'self' https://api.openai.com;",
+          "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; connect-src 'self' https://api.openai.com wss://api.deepgram.com https://api.deepseek.com https://generativelanguage.googleapis.com;",
         ],
       },
     });
@@ -392,6 +392,13 @@ app.on('before-quit', () => {
     api_call_method: config.api_call_method || 'direct',
     primaryLanguage: config.primaryLanguage || 'en',
     deepgram_api_key: config.deepgram_api_key || '',
+    deepseek_api_key: config.deepseek_api_key || '',
+    gemini_api_key: config.gemini_api_key || '',
+    deepseek_model: config.deepseek_model || 'deepseek-chat',
+    deepseek_api_base: config.deepseek_api_base || '',
+    selected_provider: config.selected_provider || 'deepseek',
+    ai_system_prompt: config.ai_system_prompt || '',
+    openai_api_base: config.openai_api_base || '',
   };
   store.clear();
   store.set('config', apiInfo);
@@ -477,7 +484,7 @@ ipcMain.handle('test-api-config', async (event, config) => {
 
       const { GoogleGenerativeAI } = require('@google/generative-ai');
       const genAI = new GoogleGenerativeAI(config.gemini_api_key);
-      const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+      const model = genAI.getGenerativeModel({ model: config.gemini_model || 'gemini-1.5-flash' });
 
       const result = await model.generateContent('Hello, this is a test.');
       const response = await result.response;
@@ -488,6 +495,26 @@ ipcMain.handle('test-api-config', async (event, config) => {
       } else {
         return { success: false, error: 'Unexpected Gemini API response structure' };
       }
+    } else if (selectedProvider === 'openai') {
+      if (!config.openai_key) {
+        return { success: false, error: 'OpenAI API Key is missing' };
+      }
+
+      const openai = new OpenAI({
+        apiKey: config.openai_key,
+        baseURL: normalizeApiBaseUrl(config.api_base),
+      });
+
+      const response = await openai.chat.completions.create({
+        model: config.gpt_model || 'gpt-3.5-turbo',
+        messages: [{ role: 'user', content: 'Hello, this is a test.' }],
+      });
+
+      if (response.choices && response.choices[0] && response.choices[0].message) {
+        return { success: true };
+      } else {
+        return { success: false, error: 'Unexpected OpenAI API response structure' };
+      }
     } else {
       // DeepSeek test
       console.log('Testing API config with:', {
@@ -495,6 +522,11 @@ ipcMain.handle('test-api-config', async (event, config) => {
         model: config.deepseek_model,
         key_length: config.deepseek_api_key ? config.deepseek_api_key.length : 0,
       });
+
+      // Check if DeepSeek API key is provided
+      if (!config.deepseek_api_key || config.deepseek_api_key === 'placeholder_deepseek_api_key') {
+        return { success: false, error: 'DeepSeek API key is missing or invalid. Please check your settings.' };
+      }
 
       const baseUrl = normalizeApiBaseUrl(config.deepseek_api_base, 'https://api.deepseek.com/v1');
       console.log('Normalized base URL:', baseUrl);
@@ -581,7 +613,7 @@ ipcMain.handle('callOpenAI', async (event, { config, messages, signal }) => {
   }
 });
 
-ipcMain.handle('callDeepSeek', async (event, { config, messages }) => {
+ipcMain.handle('callDeepSeek', async (event, { config, messages, signal }) => {
   try {
     const selectedProvider = config.selected_provider || 'deepseek';
     
@@ -593,7 +625,7 @@ ipcMain.handle('callDeepSeek', async (event, { config, messages }) => {
       const { GoogleGenerativeAI } = require('@google/generative-ai');
       const genAI = new GoogleGenerativeAI(config.gemini_api_key);
       const model = genAI.getGenerativeModel({ 
-        model: 'gemini-1.5-flash',
+        model: config.gemini_model || 'gemini-1.5-flash',
         systemInstruction: messages.find((m: any) => m.role === 'system')?.content || ''
       });
 
@@ -618,6 +650,30 @@ ipcMain.handle('callDeepSeek', async (event, { config, messages }) => {
       const text = response.text();
 
       return { content: text };
+    } else if (selectedProvider === 'openai') {
+      if (!config.openai_key) {
+        throw new Error('OpenAI API Key is missing');
+      }
+
+      const openai = new OpenAI({
+        apiKey: config.openai_key,
+        baseURL: normalizeApiBaseUrl(config.api_base),
+      });
+
+      const abortController = new AbortController();
+      if (signal) {
+        signal.addEventListener('abort', () => abortController.abort());
+      }
+
+      const response = await openai.chat.completions.create({
+        model: config.gpt_model || 'gpt-3.5-turbo',
+        messages: messages,
+      }, { signal: abortController.signal });
+
+      if (!response.choices || !response.choices[0] || !response.choices[0].message) {
+        throw new Error('Unexpected OpenAI API response structure');
+      }
+      return { content: response.choices[0].message.content };
     } else {
       // Existing DeepSeek logic
       const deepseekApi = axios.create({
@@ -626,6 +682,9 @@ ipcMain.handle('callDeepSeek', async (event, { config, messages }) => {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${config.deepseek_api_key}`,
         },
+        maxBodyLength: Infinity,
+        maxContentLength: Infinity,
+        timeout: 60000, // 60 seconds timeout
       });
 
       const response = await deepseekApi.post('/chat/completions', {
@@ -639,13 +698,59 @@ ipcMain.handle('callDeepSeek', async (event, { config, messages }) => {
       return { content: response.data.choices[0].message.content };
     }
   } catch (error) {
-    console.error('AI Call Error:', error);
+    console.error('DeepSeek AI Call Error:', error);
+    
     if (axios.isAxiosError(error)) {
-      return {
-        error: `API Error: ${error.response?.status} - ${error.response?.data?.message || error.message}`,
-      };
+      if (error.code === 'ECONNABORTED') {
+         return { error: 'Request timed out. Please try with shorter content.' };
+      }
+      if (error.response) {
+        const status = error.response.status;
+        const errorData = error.response.data;
+        
+        let errorMessage = `API Error ${status}: `;
+        
+        switch (status) {
+          case 401:
+            errorMessage += 'Authentication failed - Invalid API key';
+            break;
+          case 403:
+            errorMessage += 'Access forbidden - Check API permissions';
+            break;
+          case 404:
+            errorMessage += 'API endpoint not found - Check API configuration';
+            break;
+          case 429:
+            errorMessage += 'Rate limit exceeded - Please try again later';
+            break;
+          case 500:
+            errorMessage += 'Server error - DeepSeek service may be down';
+            break;
+          case 503:
+            errorMessage += 'Service unavailable - Please try again later';
+            break;
+          default:
+            errorMessage += errorData?.error?.message || errorData?.error || 'Unknown API error';
+        }
+        
+        return { error: errorMessage };
+      }
+      
+      if (error.request) {
+        return { error: 'Network Error: Unable to reach DeepSeek API. Please check your internet connection.' };
+      }
+      
+      return { error: `Network Error: ${error.message}` };
     }
-    return { error: error.message || 'Unknown error occurred with AI API' };
+    
+    if (error instanceof Error) {
+      if (error.message.includes('API key')) {
+        return { error: 'DeepSeek API key is missing or invalid' };
+      }
+      return { error: error.message };
+    }
+    
+    return { error: 'Unknown error occurred with DeepSeek API' };
   }
 });
 

@@ -6,6 +6,7 @@ import { KnowledgeBaseProvider } from './contexts/KnowledgeBaseContext';
 import InterviewPage from './pages/InterviewPage';
 import KnowledgeBase from './pages/KnowledgeBase';
 import Settings from './pages/Settings';
+import ResumeAnalysisPage from './pages/ResumeAnalysisPage';
 import RealtimeTranscriptionDemo from './components/RealtimeTranscriptionDemo';
 import PiPWindow from './components/PiPWindow';
 import { InterviewProvider } from './contexts/InterviewContext';
@@ -28,6 +29,7 @@ const Shell: React.FC = () => {
         <Routes>
           <Route path="/main_window" element={<InterviewPage />} />
           <Route path="/knowledge" element={<KnowledgeBase />} />
+          <Route path="/resume-analysis" element={<ResumeAnalysisPage />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/realtime-demo" element={<RealtimeTranscriptionDemo />} />
           <Route path="/pip_window" element={<PiPWindow />} />

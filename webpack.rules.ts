@@ -28,4 +28,12 @@ export const rules: Required<ModuleOptions>['rules'] = [
       },
     },
   },
+  // Add support for audio worklet files
+  {
+    test: /\.worklet\.js$/,
+    type: 'asset/resource',
+    generator: {
+      filename: 'audioWorklets/[name][ext]',
+    },
+  },
 ];

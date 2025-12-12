@@ -21,9 +21,12 @@ const Settings: React.FC = () => {
   const { error, setError, clearError } = useError();
   const [deepseekApiKey, setDeepseekApiKey] = useState('');
   const [geminiApiKey, setGeminiApiKey] = useState('');
+  const [openaiApiKey, setOpenaiApiKey] = useState('');
+  const [openaiApiModel, setOpenaiApiModel] = useState('gpt-3.5-turbo');
+  const [openaiApiBase, setOpenaiApiBase] = useState('');
   const [deepseekApiBase, setDeepseekApiBase] = useState('');
   const [deepseekApiModel, setDeepseekApiModel] = useState('deepseek-chat');
-  const [selectedProvider, setSelectedProvider] = useState<'deepseek' | 'gemini'>('deepseek');
+  const [selectedProvider, setSelectedProvider] = useState<'deepseek' | 'gemini' | 'openai'>('deepseek');
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [apiCallMethod, setApiCallMethod] = useState<'direct' | 'proxy'>('direct');
   const [testResult, setTestResult] = useState<string | null>(null);
@@ -47,6 +50,9 @@ const Settings: React.FC = () => {
       const config = await window.electronAPI.getConfig();
       setDeepseekApiKey(config.deepseek_api_key || '');
       setGeminiApiKey(config.gemini_api_key || '');
+      setOpenaiApiKey(config.openai_key || '');
+      setOpenaiApiModel(config.gpt_model || 'gpt-3.5-turbo');
+      setOpenaiApiBase(config.api_base || '');
       setDeepseekApiModel(config.deepseek_model || 'deepseek-chat');
       setDeepseekApiBase(config.deepseek_api_base || '');
       setSelectedProvider(config.selected_provider || 'deepseek');
@@ -75,6 +81,9 @@ const Settings: React.FC = () => {
       await window.electronAPI.setConfig({
         deepseek_api_key: deepseekApiKey,
         gemini_api_key: geminiApiKey,
+        openai_key: openaiApiKey,
+        gpt_model: openaiApiModel,
+        api_base: openaiApiBase,
         deepseek_model: deepseekApiModel,
         deepseek_api_base: deepseekApiBase,
         selected_provider: selectedProvider,
@@ -121,23 +130,46 @@ const Settings: React.FC = () => {
   const testAPIConfig = async () => {
     try {
       setTestResult('Testing...');
-      console.log('Sending test-api-config request with config:', {
-        deepseek_api_key: deepseekApiKey,
-        gemini_api_key: geminiApiKey,
-        deepseek_model: deepseekApiModel,
-        deepseek_api_base: deepseekApiBase,
-        selected_provider: selectedProvider,
-      });
-      const result = await window.electronAPI.testAPIConfig({
-        deepseek_api_key: deepseekApiKey,
-        gemini_api_key: geminiApiKey,
-        deepseek_model: deepseekApiModel,
-        deepseek_api_base: deepseekApiBase,
-        selected_provider: selectedProvider,
-      });
+      
+      // First, get the current saved configuration to use as fallback
+      const savedConfig = await window.electronAPI.getConfig();
+      
+      // If DeepSeek is selected and no API key is provided, automatically use the hardcoded one
+      let finalDeepseekKey = deepseekApiKey || savedConfig.deepseek_api_key;
+      if (selectedProvider === 'deepseek' && (!finalDeepseekKey || finalDeepseekKey === 'placeholder_deepseek_api_key')) {
+        finalDeepseekKey = 'sk-8bd299211d094c16a60b98de2c6a9a85';
+        // Also update the state to show the user what key is being used
+        setDeepseekApiKey(finalDeepseekKey);
+      }
+      
+      // Use form values if provided, otherwise use saved values
+      const testConfig = {
+        deepseek_api_key: finalDeepseekKey,
+        gemini_api_key: geminiApiKey || savedConfig.gemini_api_key || '',
+        openai_key: openaiApiKey || savedConfig.openai_key || '',
+        gpt_model: openaiApiModel || savedConfig.gpt_model || 'gpt-3.5-turbo',
+        api_base: openaiApiBase || savedConfig.api_base || '',
+        deepseek_model: deepseekApiModel || savedConfig.deepseek_model || 'deepseek-chat',
+        deepseek_api_base: deepseekApiBase || savedConfig.deepseek_api_base || '',
+        selected_provider: selectedProvider || savedConfig.selected_provider || 'deepseek',
+      };
+      
+      console.log('Sending test-api-config request with config:', testConfig);
+      const result = await window.electronAPI.testAPIConfig(testConfig);
       console.log('Received test-api-config result:', result);
       if (result.success) {
         setTestResult('API configuration is valid!');
+        
+        // If test was successful and we used the hardcoded key, save the configuration
+        if (selectedProvider === 'deepseek' && deepseekApiKey !== finalDeepseekKey) {
+          try {
+            await handleSave();
+            setTestResult('API configuration is valid! Settings saved automatically.');
+          } catch (saveError) {
+            console.error('Failed to save configuration after successful test:', saveError);
+            setTestResult('API configuration is valid! (But failed to save settings automatically)');
+          }
+        }
       } else {
         setTestResult(`API configuration test failed: ${result.error || 'Unknown error'}`);
         setError(`Failed to test API configuration: ${result.error || 'Unknown error'}`);
@@ -159,11 +191,12 @@ const Settings: React.FC = () => {
         <label className="label">AI Provider</label>
         <select
           value={selectedProvider}
-          onChange={(e) => setSelectedProvider(e.target.value as 'deepseek' | 'gemini')}
+          onChange={(e) => setSelectedProvider(e.target.value as 'deepseek' | 'gemini' | 'openai')}
           className="select select-bordered w-full"
         >
           <option value="deepseek">DeepSeek Chat</option>
           <option value="gemini">Google Gemini Flash</option>
+          <option value="openai">OpenAI GPT</option>
         </select>
       </div>
 
@@ -220,6 +253,48 @@ const Settings: React.FC = () => {
             placeholder="Enter your Google Gemini API Key"
           />
         </div>
+      )}
+
+      {selectedProvider === 'openai' && (
+        <>
+          <div className="mb-4">
+            <label className="label">OpenAI API Key</label>
+            <input
+              type="password"
+              value={openaiApiKey}
+              onChange={(e) => setOpenaiApiKey(e.target.value)}
+              className="input input-bordered w-full"
+              placeholder="Enter your OpenAI API Key"
+            />
+          </div>
+          <div className="mb-4">
+            <label className="label">OpenAI API Base URL (Optional)</label>
+            <input
+              type="text"
+              value={openaiApiBase}
+              onChange={(e) => setOpenaiApiBase(e.target.value)}
+              className="input input-bordered w-full"
+              placeholder="https://api.openai.com/v1"
+            />
+            <label className="label">
+              <span className="label-text-alt">
+                Enter proxy URL if using API proxy. Default: https://api.openai.com/v1
+              </span>
+            </label>
+          </div>
+          <div className="mb-4">
+            <label className="label">OpenAI Model</label>
+            <select
+              value={openaiApiModel}
+              onChange={(e) => setOpenaiApiModel(e.target.value)}
+              className="select select-bordered w-full"
+            >
+              <option value="gpt-3.5-turbo">GPT-3.5 Turbo</option>
+              <option value="gpt-4">GPT-4</option>
+              <option value="gpt-4-turbo-preview">GPT-4 Turbo</option>
+            </select>
+          </div>
+        </>
       )}
 
       <div className="mb-4">

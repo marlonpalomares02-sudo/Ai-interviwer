@@ -28,11 +28,10 @@ import {
   FaDesktop,
   FaStop,
   FaRobot,
-  FaEye,
-  FaEyeSlash,
-  FaKeyboard,
   FaWindowRestore,
   FaLightbulb,
+  FaUser,
+  FaCopy,
 } from 'react-icons/fa';
 import '../styles/enhanced-ui.css';
 
@@ -47,6 +46,25 @@ interface AiResponseSegment {
   id: string;
   text: string;
   timestamp: number;
+}
+
+interface ResumeData {
+  name?: string;
+  email?: string;
+  phone?: string;
+  experience?: Array<{
+    title: string;
+    company: string;
+    duration: string;
+    description: string;
+  }>;
+  education?: Array<{
+    degree: string;
+    institution: string;
+    year: string;
+  }>;
+  skills?: string[];
+  summary?: string;
 }
 
 const InterviewPage: React.FC = () => {
@@ -74,6 +92,12 @@ const InterviewPage: React.FC = () => {
   const aiResponseRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const transcriptionRef = useRef<HTMLTextAreaElement>(null);
+  
+  // Resume introduction state
+  const [resumeIntroduction, setResumeIntroduction] = useState<string>('');
+  const [resumeData, setResumeData] = useState<ResumeData | null>(null);
+  const [showResumeIntro, setShowResumeIntro] = useState<boolean>(false);
+  const [isIntroMaximized, setIsIntroMaximized] = useState<boolean>(false);
 
   // Segment-based state for auto-deletion
   const [transcriptSegments, setTranscriptSegments] = useState<TranscriptSegment[]>([]);
@@ -105,6 +129,121 @@ const InterviewPage: React.FC = () => {
     return () => clearInterval(interval);
   }, []);
 
+  // Load resume introduction from localStorage
+  useEffect(() => {
+    const loadResumeData = () => {
+      const intro = localStorage.getItem('resumeIntroduction');
+      const data = localStorage.getItem('resumeData');
+      
+      if (intro) {
+        setResumeIntroduction(intro);
+        setShowResumeIntro(true);
+      }
+      
+      if (data) {
+        try {
+          setResumeData(JSON.parse(data));
+        } catch (error) {
+          console.error('Error parsing resume data from localStorage:', error);
+        }
+      }
+    };
+
+    // Load on component mount
+    loadResumeData();
+
+    // Listen for storage events (when resume data is updated from other tabs)
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'resumeIntroduction' || e.key === 'resumeData') {
+        loadResumeData();
+      }
+    };
+
+    window.addEventListener('storage', handleStorageChange);
+
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+    };
+  }, []);
+
+  // Keyboard shortcuts for self-introduction panel
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      // Check if user is typing in an input field
+      const target = event.target as HTMLElement;
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
+        return;
+      }
+
+      // Ctrl/Cmd + I - Toggle show/hide self-introduction panel
+      if ((event.ctrlKey || event.metaKey) && event.key === 'i') {
+        event.preventDefault();
+        if (resumeIntroduction) {
+          const newShowState = !showResumeIntro;
+          setShowResumeIntro(newShowState);
+          // Always reset maximize state when toggling visibility
+          if (showResumeIntro) {
+            setIsIntroMaximized(false);
+          }
+          if (newShowState) {
+            setError('Resume Introduction shown via Ctrl+I');
+          } else {
+            setError('Resume Introduction hidden via Ctrl+I');
+          }
+          setTimeout(() => clearError(), 2000);
+        }
+      }
+
+      // Ctrl/Cmd + Shift + I - Maximize/minimize self-introduction panel
+      if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key === 'I') {
+        event.preventDefault();
+        if (resumeIntroduction && showResumeIntro) {
+          setIsIntroMaximized(prev => !prev);
+        }
+      }
+
+      // Ctrl/Cmd + S - Toggle hide/restore self-introduction panel
+      if ((event.ctrlKey || event.metaKey) && event.key === 's') {
+        event.preventDefault();
+        if (resumeIntroduction) {
+          if (showResumeIntro) {
+            // If shown, hide it
+            setShowResumeIntro(false);
+            setIsIntroMaximized(false); // Also reset maximize state when hiding
+            setError('Resume Introduction hidden! Press Ctrl+S to restore.');
+            setTimeout(() => clearError(), 3000);
+            console.log('Resume Introduction: Hidden via Ctrl+S');
+          } else {
+            // If hidden, show it (restored to normal size)
+            setShowResumeIntro(true);
+            setIsIntroMaximized(false); // Ensure it's not maximized when restored
+            setError('Resume Introduction restored!');
+            setTimeout(() => clearError(), 3000);
+            console.log('Resume Introduction: Restored via Ctrl+S');
+          }
+        } else {
+          console.log('Resume Introduction: Not available');
+        }
+      }
+
+      // Ctrl/Cmd + ? - Show keyboard shortcuts help
+      if ((event.ctrlKey || event.metaKey) && event.key === '?') {
+        event.preventDefault();
+        alert('Keyboard Shortcuts:\n\n' +
+              'Ctrl+I: Toggle show/hide self-introduction panel\n' +
+              'Ctrl+Shift+I: Maximize/minimize self-introduction panel\n' +
+              'Ctrl+S: Toggle hide/restore self-introduction panel\n' +
+              'Ctrl+?: Show this help');
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [resumeIntroduction, showResumeIntro]);
+
   // Sync segments to display context
   useEffect(() => {
     setDisplayedAiResult(aiResponseSegments.map((s) => s.text).join('\n\n---\n\n'));
@@ -114,21 +253,19 @@ const InterviewPage: React.FC = () => {
   const [recordingType, setRecordingType] = useState<'audio' | 'screen' | null>(null);
   const [isAudioRecording, setIsAudioRecording] = useState(false);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
-  const [isStealthMode, setIsStealthMode] = useState(false);
   const [transcriptionStatus, setTranscriptionStatus] = useState<
     'idle' | 'recording' | 'error' | 'no-audio'
   >('idle');
   const [transcriptionError, setTranscriptionError] = useState<string>('');
   const [isPiPWindowOpen, setIsPiPWindowOpen] = useState(false);
 
-  // Stealth mode toggle function
-  const toggleStealthMode = () => {
-    setIsStealthMode((prev) => !prev);
-  };
-
   // PiP window toggle function
   const togglePiPWindow = async () => {
     try {
+      if (!window.electronAPI?.ipcRenderer) {
+        console.log('Electron API not available for PiP window toggle');
+        return;
+      }
       const result = await window.electronAPI.ipcRenderer.invoke('toggle-pip-window');
       setIsPiPWindowOpen(result.isOpen);
     } catch (error) {
@@ -136,20 +273,7 @@ const InterviewPage: React.FC = () => {
     }
   };
 
-  // Keyboard event handler for Ctrl+Z
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.ctrlKey && event.key === 'z') {
-        event.preventDefault();
-        toggleStealthMode();
-      }
-    };
 
-    document.addEventListener('keydown', handleKeyDown);
-    return () => {
-      document.removeEventListener('keydown', handleKeyDown);
-    };
-  }, []);
 
   const markdownStyles = `
     .markdown-body {
@@ -193,6 +317,81 @@ const InterviewPage: React.FC = () => {
     }
   `;
 
+  // Centralized API key validation and configuration loading
+  const validateAndLoadDeepSeekConfig = async (): Promise<any> => {
+    try {
+      // Get current configuration
+      let config = await window.electronAPI.getConfig();
+      console.log('Current config loaded:', { 
+        hasApiKey: !!config.deepseek_api_key, 
+        apiKey: config.deepseek_api_key ? 'present' : 'missing',
+        isPlaceholder: config.deepseek_api_key === 'placeholder_deepseek_api_key'
+      });
+      
+      // Check if API key is missing or placeholder
+      if (!config.deepseek_api_key || config.deepseek_api_key === 'placeholder_deepseek_api_key') {
+        console.log('DeepSeek API key missing or placeholder, updating with valid key...');
+        
+        try {
+          // Update configuration with the valid API key
+          const updatedConfig = {
+            ...config,
+            deepseek_api_key: 'sk-8bd299211d094c16a60b98de2c6a9a85'
+          };
+          
+          console.log('Updating config with new API key...');
+          await window.electronAPI.setConfig(updatedConfig);
+          
+          // Re-load the updated configuration to ensure it's current
+          config = await window.electronAPI.getConfig();
+          console.log('Config reloaded after update:', { 
+            hasApiKey: !!config.deepseek_api_key, 
+            apiKey: config.deepseek_api_key ? 'present' : 'missing',
+            isPlaceholder: config.deepseek_api_key === 'placeholder_deepseek_api_key'
+          });
+          
+          // Verify the update was successful
+          if (!config.deepseek_api_key || config.deepseek_api_key === 'placeholder_deepseek_api_key') {
+            throw new Error('Configuration update failed - API key still missing after update');
+          }
+          
+          console.log('DeepSeek API key successfully updated and loaded');
+        } catch (updateError) {
+          console.error('Failed to update DeepSeek configuration:', updateError);
+          throw new Error(`Failed to update DeepSeek API configuration: ${updateError.message}`);
+        }
+      }
+      
+      // Final validation check
+      if (!config.deepseek_api_key || config.deepseek_api_key.trim() === '') {
+        throw new Error('DeepSeek API key is empty or invalid after configuration loading');
+      }
+      
+      console.log('DeepSeek config validation successful, API key is ready');
+      return config;
+    } catch (error) {
+      console.error('DeepSeek configuration validation failed:', error);
+      
+      // Set user-friendly error message
+      const errorMessage = error.message.includes('Failed to update') 
+        ? 'Failed to configure DeepSeek API. Please check your settings and try again.'
+        : 'DeepSeek API key is not configured. Please go to Settings to configure it.';
+      
+      setError(errorMessage);
+      throw error; // Re-throw to stop execution
+    }
+  };
+
+  // Configuration check function (deprecated - use validateAndLoadDeepSeekConfig instead)
+  const checkDeepSeekConfiguration = async (): Promise<boolean> => {
+    try {
+      await validateAndLoadDeepSeekConfig();
+      return true;
+    } catch (error) {
+      return false;
+    }
+  };
+
   const handleAskDeepSeek = async (newContent?: string) => {
     let contentToProcess = newContent;
     
@@ -213,9 +412,25 @@ const InterviewPage: React.FC = () => {
 
     if (!contentToProcess) return;
 
+    // Check if electronAPI is available
+    if (!window.electronAPI?.getConfig || !window.electronAPI?.callDeepSeek) {
+      console.log('Electron API not available for AI processing');
+      setError('AI processing not available - Electron API missing');
+      setTimeout(() => clearError(), 3000);
+      return;
+    }
+
+    // Check DeepSeek configuration before proceeding
+    const isConfigured = await checkDeepSeekConfiguration();
+    if (!isConfigured) {
+      return;
+    }
+
     setIsLoading(true);
     try {
-      const config = await window.electronAPI.getConfig();
+      // Validate and load configuration using centralized function
+      const config = await validateAndLoadDeepSeekConfig();
+      console.log('handleGenerateSmartQuestions: Configuration validated, preparing API call...');
 
       // Build messages array with system prompt if available
       const messages = [];
@@ -235,6 +450,14 @@ const InterviewPage: React.FC = () => {
       messages.push({ role: 'user', content: contentToProcess });
 
       // Use DeepSeek Chat instead of OpenAI
+      console.log('handleAskDeepSeek: Making API call with config:', { 
+        hasApiKey: !!config.deepseek_api_key,
+        apiKeyPreview: config.deepseek_api_key ? config.deepseek_api_key.substring(0, 10) + '...' : 'missing'
+      });
+      console.log('handleGenerateSmartQuestions: Making API call with config:', { 
+        hasApiKey: !!config.deepseek_api_key,
+        apiKeyPreview: config.deepseek_api_key ? config.deepseek_api_key.substring(0, 10) + '...' : 'missing'
+      });
       const response = await window.electronAPI.callDeepSeek({
         config: config,
         messages: messages,
@@ -258,12 +481,35 @@ const InterviewPage: React.FC = () => {
 
       // Send AI response to PiP window
       try {
-        await window.electronAPI.ipcRenderer.invoke('update-pip-content', formattedResponse);
+        if (window.electronAPI?.ipcRenderer) {
+          await window.electronAPI.ipcRenderer.invoke('update-pip-content', formattedResponse);
+        } else {
+          console.log('Electron API not available for PiP window update');
+        }
       } catch (error) {
         console.log('Failed to update PiP window:', error);
       }
     } catch (error) {
-      setError('Failed to get response from DeepSeek Chat. Please try again.');
+      console.error('DeepSeek Chat Error:', error);
+      let errorMessage = 'Failed to get response from DeepSeek Chat.';
+      
+      if (error instanceof Error) {
+        if (error.message.includes('API key')) {
+          errorMessage = 'DeepSeek API key is missing or invalid. Please check your settings.';
+        } else if (error.message.includes('timeout')) {
+          errorMessage = 'Request timed out. Please try with shorter content.';
+        } else if (error.message.includes('Network')) {
+          errorMessage = 'Network error. Please check your internet connection.';
+        } else if (error.message.includes('404')) {
+          errorMessage = 'DeepSeek API endpoint not found. Please check your API configuration.';
+        } else if (error.message.includes('401')) {
+          errorMessage = 'Authentication failed. Please check your DeepSeek API key.';
+        } else {
+          errorMessage = `DeepSeek API Error: ${error.message}`;
+        }
+      }
+      
+      setError(errorMessage);
     } finally {
       setIsLoading(false);
       if (aiResponseRef.current) {
@@ -275,7 +521,24 @@ const InterviewPage: React.FC = () => {
   const handleGenerateSmartQuestions = async () => {
     setIsLoading(true);
     try {
-      const config = await window.electronAPI.getConfig();
+      // Check if electronAPI is available
+      if (!window.electronAPI?.getConfig || !window.electronAPI?.callDeepSeek) {
+        console.log('Electron API not available for smart questions');
+        setError('Smart questions not available - Electron API missing');
+        setTimeout(() => clearError(), 3000);
+        setIsLoading(false);
+        return;
+      }
+
+      // Check DeepSeek configuration before proceeding
+      const isConfigured = await checkDeepSeekConfiguration();
+      if (!isConfigured) {
+        setIsLoading(false);
+        return;
+      }
+
+      // Validate and load configuration using centralized function
+      const config = await validateAndLoadDeepSeekConfig();
 
       const smartQuestionsPrompt = `
         Based on the interview context below (if any), generate 5-7 smart, strategic questions that a Senior Digital Marketing Specialist (Google/Meta Ads Expert) should ask this client right now.
@@ -316,7 +579,11 @@ const InterviewPage: React.FC = () => {
       
       // Send to PiP
       try {
-        await window.electronAPI.ipcRenderer.invoke('update-pip-content', formattedResponse);
+        if (window.electronAPI?.ipcRenderer) {
+          await window.electronAPI.ipcRenderer.invoke('update-pip-content', formattedResponse);
+        } else {
+          console.log('Electron API not available for PiP window update');
+        }
       } catch (error) {
         console.log('Failed to update PiP window:', error);
       }
@@ -349,6 +616,12 @@ const InterviewPage: React.FC = () => {
   useEffect(() => {
     let lastTranscriptTime = Date.now();
     let checkTimer: NodeJS.Timeout | null = null;
+
+    // Check if electronAPI is available
+    if (!window.electronAPI?.ipcRenderer) {
+      console.log('Electron API not available, skipping Deepgram transcript listener');
+      return;
+    }
 
     const handleDeepgramTranscript = (_event: any, data: any) => {
       console.log('Received Deepgram transcript data:', data);
@@ -570,6 +843,13 @@ const InterviewPage: React.FC = () => {
       }
 
       // Start Deepgram connection
+      if (!window.electronAPI?.getConfig || !window.electronAPI?.ipcRenderer) {
+        console.log('Electron API not available for Deepgram connection');
+        setError('Transcription not available - Electron API missing');
+        setTimeout(() => clearError(), 3000);
+        setIsLoading(false);
+        return;
+      }
       const config = await window.electronAPI.getConfig();
       const deepgramResult = await window.electronAPI.ipcRenderer.invoke('start-deepgram', {
         deepgram_key: config.deepgram_api_key,
@@ -618,7 +898,11 @@ const InterviewPage: React.FC = () => {
             // Only send if we have actual audio data
             if (audioData.length > 0) {
               console.log(`Sending ${audioData.length} samples to Deepgram`);
-              window.electronAPI.ipcRenderer.invoke('send-audio-to-deepgram', audioData.buffer);
+              if (window.electronAPI?.ipcRenderer) {
+                window.electronAPI.ipcRenderer.invoke('send-audio-to-deepgram', audioData.buffer);
+              } else {
+                console.log('Electron API not available for audio transmission');
+              }
               } else {
                 console.log('No audio data to send (silence detected)');
               }
@@ -686,10 +970,14 @@ const InterviewPage: React.FC = () => {
 
                       if (audioData.length > 0) {
                         console.log(`Sending ${audioData.length} samples to Deepgram`);
-                        window.electronAPI.ipcRenderer.invoke(
-                          'send-audio-to-deepgram',
-                          audioData.buffer
-                        );
+                        if (window.electronAPI?.ipcRenderer) {
+                          window.electronAPI.ipcRenderer.invoke(
+                            'send-audio-to-deepgram',
+                            audioData.buffer
+                          );
+                        } else {
+                          console.log('Electron API not available for audio transmission');
+                        }
                       } else {
                         console.log('No audio data to send (silence detected)');
                       }
@@ -735,9 +1023,13 @@ const InterviewPage: React.FC = () => {
     console.log('Stopping recording and cleaning up resources...');
 
     // Stop Deepgram connection first
-    window.electronAPI.ipcRenderer.invoke('stop-deepgram').catch((error) => {
-      console.warn('Error stopping Deepgram connection:', error);
-    });
+    if (window.electronAPI?.ipcRenderer) {
+      window.electronAPI.ipcRenderer.invoke('stop-deepgram').catch((error) => {
+        console.warn('Error stopping Deepgram connection:', error);
+      });
+    } else {
+      console.log('Electron API not available for stopping Deepgram');
+    }
 
     // Clean up Audio Worklet manager
     if (workletManager) {
@@ -799,7 +1091,11 @@ const InterviewPage: React.FC = () => {
 
   const stopAudioRecording = () => {
     console.log('Stopping audio recording...');
-    window.electronAPI.ipcRenderer.invoke('stop-deepgram').catch(() => {});
+    if (window.electronAPI?.ipcRenderer) {
+      window.electronAPI.ipcRenderer.invoke('stop-deepgram').catch(() => {});
+    } else {
+      console.log('Electron API not available for stopping audio recording');
+    }
 
     // Clean up Audio Worklet manager
     if (workletManager) {
@@ -876,7 +1172,7 @@ const InterviewPage: React.FC = () => {
 
   return (
     <div
-      className={`flex flex-col h-[calc(100vh-2.5rem)] p-4 space-y-4 bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 gradient-animated ${isStealthMode ? 'hidden' : ''}`}
+      className="flex flex-col h-[calc(100vh-2.5rem)] p-4 space-y-4 bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 gradient-animated"
     >
       <style>{markdownStyles}</style>
       <ErrorDisplay error={error} onClose={clearError} />
@@ -955,17 +1251,34 @@ const InterviewPage: React.FC = () => {
           <span>PiP Window</span>
         </button>
 
-        {/* Stealth Mode Indicator with Icon */}
-        <div
-          className={`flex items-center space-x-2 px-4 py-2 rounded-xl backdrop-blur-lg border transition-all duration-300 ${isStealthMode ? 'bg-green-500/20 border-green-400/50 text-green-300' : 'bg-gray-500/20 border-gray-400/50 text-gray-300'}`}
+        {/* Resume Self-Introduction Toggle */}
+        <button
+          onClick={() => {
+            if (resumeIntroduction) {
+              const newShowState = !showResumeIntro;
+              setShowResumeIntro(newShowState);
+              // Always reset maximize state when toggling visibility
+              if (showResumeIntro) {
+                setIsIntroMaximized(false);
+              }
+            }
+          }}
+          disabled={!resumeIntroduction}
+          className={`btn btn-lg ${showResumeIntro ? 'btn-success' : 'btn-outline'} ${!resumeIntroduction ? 'btn-disabled' : 'hover:scale-105 hover:shadow-lg'} transition-all duration-300 flex items-center space-x-2 pulse-on-hover`}
+          aria-label={showResumeIntro ? 'Hide Resume Self-Introduction' : 'Show Resume Self-Introduction'}
+          aria-pressed={showResumeIntro}
+          title={!resumeIntroduction ? 'No resume introduction available' : showResumeIntro ? 'Hide Resume Introduction (Ctrl+I)' : 'Show Resume Introduction (Ctrl+I)'}
         >
-          {isStealthMode ? (
-            <FaEyeSlash className="text-green-400" />
-          ) : (
-            <FaEye className="text-gray-400" />
+          <FaUser className={`text-xl ${showResumeIntro ? 'animate-pulse' : ''}`} />
+          <span>Resume Intro</span>
+          {resumeIntroduction && (
+            <span className={`badge badge-sm ${showResumeIntro ? 'badge-success' : 'badge-outline'} animate-bounce`}>
+              {showResumeIntro ? 'VISIBLE' : 'HIDDEN'}
+            </span>
           )}
-          <span className="text-sm font-bold">Stealth: {isStealthMode ? 'ON' : 'OFF'}</span>
-        </div>
+        </button>
+
+
 
         {/* Transcription Status Indicator with Enhanced Styling */}
         {isRecording && (
@@ -992,11 +1305,7 @@ const InterviewPage: React.FC = () => {
           </div>
         )}
 
-        {/* Keyboard Shortcut Indicator */}
-        <div className="flex items-center space-x-2 px-3 py-2 bg-gradient-to-r from-orange-500/20 to-red-500/20 backdrop-blur-lg rounded-xl border border-white/10">
-          <FaKeyboard className="text-orange-400" />
-          <span className="text-xs text-orange-300 font-medium">Ctrl+Z: Toggle Stealth</span>
-        </div>
+
       </div>
       <div className="flex flex-1 space-x-4 overflow-hidden">
         {/* Transcription Panel */}
@@ -1045,6 +1354,134 @@ const InterviewPage: React.FC = () => {
           </button>
         </div>
 
+        {/* Floating Resume Indicator - Always visible when hidden but available */}
+        {resumeIntroduction && !showResumeIntro && (
+          <div className="fixed top-20 right-4 z-50 animate-bounce">
+            <div className="bg-green-600/90 backdrop-blur-lg border border-green-400/50 rounded-full px-4 py-2 shadow-lg">
+              <div className="flex items-center space-x-2">
+                <FaUser className="text-white text-sm animate-pulse" />
+                <span className="text-white text-xs font-medium">Resume Hidden</span>
+                <button
+                  onClick={() => setShowResumeIntro(true)}
+                  className="btn btn-xs btn-success btn-circle"
+                  title="Show Resume Introduction"
+                >
+                  <span className="text-xs">👁</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Resume Introduction Available Indicator - Enhanced */}
+        {resumeIntroduction && !showResumeIntro && (
+          <div className="mb-3 p-3 bg-green-800/40 border-2 border-green-500/60 rounded-lg text-center animate-pulse">
+            <p className="text-green-300 text-sm font-medium">
+              📋 Resume self-introduction is available but hidden!
+            </p>
+            <p className="text-green-400 text-xs mt-1">
+              Press <kbd className="px-2 py-1 bg-gray-700 rounded text-xs font-mono">Ctrl+I</kbd> to show or <kbd className="px-2 py-1 bg-gray-700 rounded text-xs font-mono">Ctrl+S</kbd> to restore
+            </p>
+          </div>
+        )}
+
+        {/* Resume Self-Introduction Panel */}
+        {showResumeIntro && resumeIntroduction && (
+          <>
+            {isIntroMaximized && (
+              <div className="fixed inset-0 bg-black/50 z-40" onClick={() => setIsIntroMaximized(false)} />
+            )}
+            <div className={`flex flex-col bg-gradient-to-br from-green-800/50 to-emerald-900/50 backdrop-blur-lg p-4 rounded-2xl border border-white/10 shadow-2xl ${
+              isIntroMaximized ? 'fixed inset-4 z-50' : 'flex-1'
+            }`}>
+            <div className="flex items-center justify-between mb-3">
+              <h3
+                className="text-lg font-bold text-white flex items-center space-x-2"
+                aria-label="Resume Self-Introduction panel"
+              >
+                <FaUser className="text-green-400" />
+                <span>Resume Self-Introduction</span>
+                {isIntroMaximized && (
+                  <span className="text-xs bg-yellow-500 text-black px-2 py-1 rounded-full font-bold animate-pulse">
+                    MAXIMIZED
+                  </span>
+                )}
+                <span className="text-xs text-gray-300 ml-2">
+                  (Ctrl+I: Hide/Show • Ctrl+Shift+I: Maximize • Ctrl+S: Hide/Restore • Ctrl+?: Help)
+                </span>
+              </h3>
+              <div className="flex items-center space-x-2">
+                <button
+                  onClick={() => setIsIntroMaximized(!isIntroMaximized)}
+                  className="btn btn-ghost btn-sm text-gray-300 hover:text-white hover:bg-white/10 transition-all duration-300 rounded-lg"
+                  aria-label={isIntroMaximized ? "Minimize introduction" : "Maximize introduction"}
+                  title={isIntroMaximized ? "Minimize (Ctrl+Shift+I)" : "Maximize (Ctrl+Shift+I)"}
+                >
+                  {isIntroMaximized ? "Minimize" : "Maximize"}
+                </button>
+                <button
+                  onClick={() => setShowResumeIntro(!showResumeIntro)}
+                  className="btn btn-ghost btn-sm text-gray-300 hover:text-white hover:bg-white/10 transition-all duration-300 rounded-lg"
+                  aria-label={showResumeIntro ? "Hide introduction" : "Show introduction"}
+                  title="Hide (Ctrl+I)"
+                >
+                  Hide
+                </button>
+                <button
+                  onClick={() => {
+                    setResumeIntroduction('');
+                    setResumeData(null);
+                    localStorage.removeItem('resumeIntroduction');
+                    localStorage.removeItem('resumeData');
+                    setShowResumeIntro(false);
+                    setIsIntroMaximized(false);
+                  }}
+                  className="btn btn-ghost btn-sm text-gray-300 hover:text-red-400 hover:bg-white/10 transition-all duration-300 rounded-lg"
+                  aria-label="Clear resume introduction"
+                >
+                  Clear
+                </button>
+              </div>
+            </div>
+            {showResumeIntro && (
+              <div className={`overflow-auto bg-gray-800/30 p-4 rounded-xl border border-white/10 mb-3 custom-scrollbar text-white ${
+                isIntroMaximized ? 'flex-1' : 'min-h-[120px]'
+              }`}>
+                <div className="whitespace-pre-wrap text-sm leading-relaxed">
+                  {resumeIntroduction}
+                </div>
+              </div>
+            )}
+            <div className="flex justify-between space-x-2">
+              <button
+                onClick={async (e) => {
+                  try {
+                    await navigator.clipboard.writeText(resumeIntroduction);
+                    // Visual feedback
+                    const button = e.currentTarget as HTMLButtonElement;
+                    const originalText = button.innerHTML;
+                    button.innerHTML = '<FaCopy /> Copied!';
+                    button.classList.add('btn-success');
+                    setTimeout(() => {
+                      button.innerHTML = originalText;
+                      button.classList.remove('btn-success');
+                    }, 2000);
+                  } catch (error) {
+                    console.error('Failed to copy introduction:', error);
+                    setError('Failed to copy introduction to clipboard.');
+                  }
+                }}
+                className="btn btn-primary flex-1 flex items-center justify-center space-x-2 transition-all duration-300 hover:scale-105 hover:shadow-lg"
+                aria-label="Copy self-introduction to clipboard"
+              >
+                <FaCopy />
+                <span>Copy to Clipboard</span>
+              </button>
+            </div>
+          </div>
+        </>
+        )}
+
         {/* AI Response Panel */}
         <div className="flex-1 flex flex-col bg-gradient-to-br from-purple-800/50 to-blue-900/50 backdrop-blur-lg p-4 rounded-2xl border border-white/10 shadow-2xl">
           <div className="flex items-center justify-between mb-3">
@@ -1074,7 +1511,7 @@ const InterviewPage: React.FC = () => {
             <ReactMarkdown
               className="whitespace-pre-wrap markdown-body"
               components={{
-                p: ({ node, ...props }) => <p style={{ whiteSpace: 'pre-wrap' }} {...props} />,
+                p: ({ ...props }) => <p style={{ whiteSpace: 'pre-wrap' }} {...props} />,
               }}
             >
               {displayedAiResult || '*AI insights will appear here as you speak...*'}

@@ -34,22 +34,20 @@ export class AudioWorkletManager {
       let moduleLoaded = false;
 
       try {
-        // Method 1: Try with relative path (most reliable for Electron apps)
-        await this.audioContext.audioWorklet.addModule('./audioWorklets/audioProcessor.worklet.js');
+        // Method 1: Try with webpack asset path (for development)
+        await this.audioContext.audioWorklet.addModule('/audioWorklets/audioProcessor.worklet.js');
         moduleLoaded = true;
-        console.log('Audio Worklet module loaded with relative path');
+        console.log('Audio Worklet module loaded with webpack asset path');
       } catch (error) {
-        console.warn('Failed to load with relative path, trying alternative methods:', error);
+        console.warn('Failed to load with webpack asset path, trying relative path:', error);
 
         try {
-          // Method 2: Try with absolute path from root
-          await this.audioContext.audioWorklet.addModule(
-            '/src/audioWorklets/audioProcessor.worklet.js'
-          );
+          // Method 2: Try with relative path (for Electron production)
+          await this.audioContext.audioWorklet.addModule('./audioWorklets/audioProcessor.worklet.js');
           moduleLoaded = true;
-          console.log('Audio Worklet module loaded with absolute path');
+          console.log('Audio Worklet module loaded with relative path');
         } catch (error2) {
-          console.warn('Failed to load with absolute path, trying blob fallback:', error2);
+          console.warn('Failed to load with relative path, trying blob fallback:', error2);
 
           try {
             // Method 3: Try with blob URL as fallback
