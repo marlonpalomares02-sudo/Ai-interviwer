@@ -85,6 +85,84 @@ const ResumeAnalysisPage: React.FC = () => {
     }
   };
 
+  const validateAndLoadAIConfig = async (): Promise<any> => {
+    try {
+      // Get current configuration
+      let config = await window.electronAPI.getConfig();
+      const selectedProvider = config.selected_provider || 'deepseek';
+      
+      console.log('Current config loaded:', { 
+        selectedProvider,
+        hasDeepseekKey: !!config.deepseek_api_key,
+        hasGeminiKey: !!config.gemini_api_key
+      });
+      
+      // Validate based on selected provider
+      if (selectedProvider === 'deepseek') {
+        // Check if DeepSeek API key is missing or placeholder
+        if (!config.deepseek_api_key || config.deepseek_api_key === 'placeholder_deepseek_api_key') {
+          console.log('DeepSeek API key missing or placeholder, updating with valid key...');
+          
+          try {
+            // Update configuration with the valid API key from environment
+            const updatedConfig = {
+              ...config,
+              deepseek_api_key: config.deepseek_api_key || process.env.DEEPSEEK_API_KEY || 'sk-ab9014b66b3948999d51a3ce089fc7c6'
+            };
+            
+            console.log('Updating config with DeepSeek API key...');
+            await window.electronAPI.setConfig(updatedConfig);
+            
+            // Re-load the updated configuration
+            config = await window.electronAPI.getConfig();
+          } catch (updateError) {
+            console.error('Failed to update DeepSeek configuration:', updateError);
+            throw new Error(`Failed to update DeepSeek API configuration: ${updateError.message}`);
+          }
+        }
+        
+        // Final validation for DeepSeek
+        if (!config.deepseek_api_key || config.deepseek_api_key.trim() === '') {
+          throw new Error('DeepSeek API key is empty or invalid after configuration loading');
+        }
+        
+      } else if (selectedProvider === 'gemini') {
+        // Check if Gemini API key is missing or placeholder
+        if (!config.gemini_api_key || config.gemini_api_key === 'placeholder_gemini_api_key') {
+          console.log('Gemini API key missing or placeholder, updating with valid key...');
+          
+          try {
+            // Update configuration with the valid API key from environment
+            const updatedConfig = {
+              ...config,
+              gemini_api_key: config.gemini_api_key || process.env.GEMINI_API_KEY || 'AIzaSyD9bPmdYEgSb91mSzBLsC9H4oLygJv4KDM'
+            };
+            
+            console.log('Updating config with Gemini API key...');
+            await window.electronAPI.setConfig(updatedConfig);
+            
+            // Re-load the updated configuration
+            config = await window.electronAPI.getConfig();
+          } catch (updateError) {
+            console.error('Failed to update Gemini configuration:', updateError);
+            throw new Error(`Failed to update Gemini API configuration: ${updateError.message}`);
+          }
+        }
+        
+        // Final validation for Gemini
+        if (!config.gemini_api_key || config.gemini_api_key.trim() === '') {
+          throw new Error('Gemini API key is empty or invalid after configuration loading');
+        }
+      }
+      
+      console.log(`${selectedProvider.toUpperCase()} config validation successful, API key is ready`);
+      return config;
+    } catch (error) {
+      console.error('AI configuration validation failed:', error);
+      throw error;
+    }
+  };
+
   const analyzeResume = async (autoGenerateIntro = false) => {
     if (!uploadedFile?.pdfText) {
       setError('No resume text to analyze. Please upload a PDF first.');
@@ -93,26 +171,7 @@ const ResumeAnalysisPage: React.FC = () => {
 
     setIsAnalyzing(true);
     try {
-      const config = await window.electronAPI.getConfig();
-      
-      // Check if DeepSeek API key is configured, if not, update it
-      if (!config.deepseek_api_key || config.deepseek_api_key === 'placeholder_deepseek_api_key') {
-        try {
-          const updatedConfig = {
-            ...config,
-            deepseek_api_key: 'sk-8bd299211d094c16a60b98de2c6a9a85'
-          };
-          await window.electronAPI.setConfig(updatedConfig);
-          // Re-get the updated config
-          const newConfig = await window.electronAPI.getConfig();
-          Object.assign(config, newConfig);
-        } catch (updateError) {
-          console.error('Failed to update DeepSeek configuration:', updateError);
-          setError('DeepSeek API key is not configured. Please go to Settings to configure it.');
-          setIsAnalyzing(false);
-          return;
-        }
-      }
+      const config = await validateAndLoadAIConfig();
       
       // Optimized prompt for faster analysis
       const analysisPrompt = `
@@ -195,7 +254,29 @@ const ResumeAnalysisPage: React.FC = () => {
       }
     } catch (error) {
       console.error('Error analyzing resume:', error);
-      setError('Failed to analyze resume. Please try again.');
+      
+      let errorMessage = 'Failed to analyze resume. Please try again.';
+      const provider = (await window.electronAPI.getConfig()).selected_provider || 'deepseek';
+      
+      if (error instanceof Error) {
+        if (error.message.includes('Gemini Model Not Found') || error.message.includes('Gemini Bad Request') || error.message.includes('Gemini Access Denied')) {
+          errorMessage = error.message;
+        } else if (error.message.includes('API key')) {
+          errorMessage = `${provider.toUpperCase()} API key is missing or invalid. Please check your settings.`;
+        } else if (error.message.includes('timeout')) {
+          errorMessage = 'Request timed out. Please try with shorter content.';
+        } else if (error.message.includes('Network')) {
+          errorMessage = 'Network error. Please check your internet connection.';
+        } else if (error.message.includes('404')) {
+          errorMessage = `${provider.toUpperCase()} API endpoint or model not found. Please check your configuration.`;
+        } else if (error.message.includes('401')) {
+          errorMessage = `Authentication failed. Please check your ${provider.toUpperCase()} API key.`;
+        } else {
+          errorMessage = `${provider.toUpperCase()} API Error: ${error.message}`;
+        }
+      }
+      
+      setError(errorMessage);
     } finally {
       setIsAnalyzing(false);
     }
@@ -224,26 +305,7 @@ const ResumeAnalysisPage: React.FC = () => {
 
     setIsGenerating(true);
     try {
-      const config = await window.electronAPI.getConfig();
-      
-      // Check if DeepSeek API key is configured, if not, update it
-      if (!config.deepseek_api_key || config.deepseek_api_key === 'placeholder_deepseek_api_key') {
-        try {
-          const updatedConfig = {
-            ...config,
-            deepseek_api_key: 'sk-8bd299211d094c16a60b98de2c6a9a85'
-          };
-          await window.electronAPI.setConfig(updatedConfig);
-          // Re-get the updated config
-          const newConfig = await window.electronAPI.getConfig();
-          Object.assign(config, newConfig);
-        } catch (updateError) {
-          console.error('Failed to update DeepSeek configuration:', updateError);
-          setError('DeepSeek API key is not configured. Please go to Settings to configure it.');
-          setIsGenerating(false);
-          return;
-        }
-      }
+      const config = await validateAndLoadAIConfig();
       
       console.log('Generating introduction with data:', data);
       
@@ -301,11 +363,31 @@ const ResumeAnalysisPage: React.FC = () => {
       clearError();
     } catch (error) {
       console.error('Error generating introduction:', error);
+      
+      let errorMessage = 'Failed to generate introduction. Please try again.';
+      const provider = (await window.electronAPI.getConfig()).selected_provider || 'deepseek';
+
       if (error instanceof TypeError && error.message.includes('circular structure')) {
-        setError('Failed to generate introduction due to data formatting issue. Please try analyzing the resume again.');
-      } else {
-        setError('Failed to generate introduction. Please try again.');
+        errorMessage = 'Failed to generate introduction due to data formatting issue. Please try analyzing the resume again.';
+      } else if (error instanceof Error) {
+        if (error.message.includes('Gemini Model Not Found') || error.message.includes('Gemini Bad Request') || error.message.includes('Gemini Access Denied')) {
+          errorMessage = error.message;
+        } else if (error.message.includes('API key')) {
+          errorMessage = `${provider.toUpperCase()} API key is missing or invalid. Please check your settings.`;
+        } else if (error.message.includes('timeout')) {
+          errorMessage = 'Request timed out. Please try with shorter content.';
+        } else if (error.message.includes('Network')) {
+          errorMessage = 'Network error. Please check your internet connection.';
+        } else if (error.message.includes('404')) {
+          errorMessage = `${provider.toUpperCase()} API endpoint or model not found. Please check your configuration.`;
+        } else if (error.message.includes('401')) {
+          errorMessage = `Authentication failed. Please check your ${provider.toUpperCase()} API key.`;
+        } else {
+          errorMessage = `${provider.toUpperCase()} API Error: ${error.message}`;
+        }
       }
+      
+      setError(errorMessage);
     } finally {
       setIsGenerating(false);
     }

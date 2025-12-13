@@ -21,6 +21,7 @@
     "axios": "^1.7.7",
     "cross-fetch": "^4.0.0",
     "daisyui": "^4.12.10",
+    "dotenv": "^17.2.3",
     "electron-squirrel-startup": "^1.0.1",
     "electron-store": "^10.0.0",
     "ffmpeg-static": "^5.2.0",

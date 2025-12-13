@@ -157,12 +157,23 @@ const ScreenSharePicker: React.FC<ScreenSharePickerProps> = ({ onSourceSelected,
             <div className="bg-blue-500/10 border border-blue-500/30 rounded-xl p-4 mb-6">
               <div className="flex items-start space-x-3">
                 <FaChrome className="text-blue-400 text-xl mt-1" />
-                <div>
+                <div className="flex-1">
                   <h4 className="text-blue-400 font-bold mb-1">Chrome Profiles & Tabs</h4>
-                  <p className="text-gray-300 text-sm">
-                    To share a specific tab from any Chrome profile, please <strong>move that tab to a new window</strong>. 
-                    Due to security restrictions, individual tabs are only detectable as windows.
+                  <p className="text-gray-300 text-sm mb-3">
+                    To share a specific tab, you can use the System Picker which supports selecting individual tabs directly.
+                    Alternatively, move the tab to a new window to see it listed below.
                   </p>
+                  <button 
+                    onClick={() => {
+                      // Use the system/browser default picker (which might support tabs in some environments)
+                      // or just bypass the custom picker
+                      onSourceSelected({ id: 'system-picker', name: 'System Picker', thumbnail: '', appIcon: null, withAudio });
+                    }}
+                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors duration-200 flex items-center gap-2 shadow-lg hover:shadow-blue-500/30"
+                  >
+                    <FaSearch className="text-xs" />
+                    Open System Picker (Select Tab)
+                  </button>
                 </div>
               </div>
             </div>

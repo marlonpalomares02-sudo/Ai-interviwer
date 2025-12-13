@@ -97,6 +97,9 @@ const InterviewPage: React.FC = () => {
   const [resumeIntroduction, setResumeIntroduction] = useState<string>('');
   const [resumeData, setResumeData] = useState<ResumeData | null>(null);
   const [showResumeIntro, setShowResumeIntro] = useState<boolean>(false);
+  
+  // Current AI provider state
+  const [currentProvider, setCurrentProvider] = useState<string>('deepseek');
   const [isIntroMaximized, setIsIntroMaximized] = useState<boolean>(false);
 
   // Segment-based state for auto-deletion
@@ -148,6 +151,20 @@ const InterviewPage: React.FC = () => {
         }
       }
     };
+
+    // Load current AI provider from config
+    const loadCurrentProvider = async () => {
+      try {
+        const config = await window.electronAPI.getConfig();
+        const provider = config.selected_provider || 'deepseek';
+        setCurrentProvider(provider);
+        console.log('Loaded current AI provider:', provider);
+      } catch (error) {
+        console.error('Failed to load current AI provider:', error);
+      }
+    };
+
+    loadCurrentProvider();
 
     // Load on component mount
     loadResumeData();
@@ -317,82 +334,126 @@ const InterviewPage: React.FC = () => {
     }
   `;
 
-  // Centralized API key validation and configuration loading
-  const validateAndLoadDeepSeekConfig = async (): Promise<any> => {
+  // Centralized API key validation and configuration loading for selected provider
+  const validateAndLoadAIConfig = async (): Promise<any> => {
     try {
       // Get current configuration
       let config = await window.electronAPI.getConfig();
+      const selectedProvider = config.selected_provider || 'deepseek';
+
+      // Temporary fallback for user's Gemini key if missing (helps with first-time setup for specific user)
+      if (selectedProvider === 'gemini' && !config.gemini_api_key) {
+         config.gemini_api_key = process.env.GEMINI_API_KEY || 'AIzaSyD9bPmdYEgSb91mSzBLsC9H4oLygJv4KDM';
+      }
+      
       console.log('Current config loaded:', { 
-        hasApiKey: !!config.deepseek_api_key, 
-        apiKey: config.deepseek_api_key ? 'present' : 'missing',
-        isPlaceholder: config.deepseek_api_key === 'placeholder_deepseek_api_key'
+        selectedProvider,
+        hasDeepseekKey: !!config.deepseek_api_key,
+        hasGeminiKey: !!config.gemini_api_key,
+        hasDeepgramKey: !!config.deepgram_api_key
       });
       
-      // Check if API key is missing or placeholder
-      if (!config.deepseek_api_key || config.deepseek_api_key === 'placeholder_deepseek_api_key') {
-        console.log('DeepSeek API key missing or placeholder, updating with valid key...');
-        
-        try {
-          // Update configuration with the valid API key
-          const updatedConfig = {
-            ...config,
-            deepseek_api_key: 'sk-8bd299211d094c16a60b98de2c6a9a85'
-          };
+      // Validate based on selected provider
+      if (selectedProvider === 'deepseek') {
+        // Check if DeepSeek API key is missing or placeholder
+        if (!config.deepseek_api_key || config.deepseek_api_key === 'placeholder_deepseek_api_key') {
+          console.log('DeepSeek API key missing or placeholder, updating with valid key...');
           
-          console.log('Updating config with new API key...');
-          await window.electronAPI.setConfig(updatedConfig);
-          
-          // Re-load the updated configuration to ensure it's current
-          config = await window.electronAPI.getConfig();
-          console.log('Config reloaded after update:', { 
-            hasApiKey: !!config.deepseek_api_key, 
-            apiKey: config.deepseek_api_key ? 'present' : 'missing',
-            isPlaceholder: config.deepseek_api_key === 'placeholder_deepseek_api_key'
-          });
-          
-          // Verify the update was successful
-          if (!config.deepseek_api_key || config.deepseek_api_key === 'placeholder_deepseek_api_key') {
-            throw new Error('Configuration update failed - API key still missing after update');
+          try {
+            // Update configuration with the valid API key from environment
+            const updatedConfig = {
+              ...config,
+              deepseek_api_key: config.deepseek_api_key || process.env.DEEPSEEK_API_KEY || 'sk-ab9014b66b3948999d51a3ce089fc7c6'
+            };
+            
+            console.log('Updating config with DeepSeek API key...');
+            await window.electronAPI.setConfig(updatedConfig);
+            
+            // Re-load the updated configuration
+            config = await window.electronAPI.getConfig();
+            console.log('Config reloaded after DeepSeek update:', { 
+              hasApiKey: !!config.deepseek_api_key
+            });
+          } catch (updateError) {
+            console.error('Failed to update DeepSeek configuration:', updateError);
+            throw new Error(`Failed to update DeepSeek API configuration: ${updateError.message}`);
           }
+        }
+        
+        // Final validation for DeepSeek
+        if (!config.deepseek_api_key || config.deepseek_api_key.trim() === '') {
+          throw new Error('DeepSeek API key is empty or invalid after configuration loading');
+        }
+        
+      } else if (selectedProvider === 'gemini') {
+        // Check if Gemini API key is missing or placeholder
+        if (!config.gemini_api_key || config.gemini_api_key === 'placeholder_gemini_api_key') {
+          console.log('Gemini API key missing or placeholder, updating with valid key...');
           
-          console.log('DeepSeek API key successfully updated and loaded');
-        } catch (updateError) {
-          console.error('Failed to update DeepSeek configuration:', updateError);
-          throw new Error(`Failed to update DeepSeek API configuration: ${updateError.message}`);
+          try {
+            // Update configuration with the valid API key from environment
+            const updatedConfig = {
+              ...config,
+              gemini_api_key: config.gemini_api_key || process.env.GEMINI_API_KEY || ''
+            };
+            
+            console.log('Updating config with Gemini API key...');
+            await window.electronAPI.setConfig(updatedConfig);
+            
+            // Re-load the updated configuration
+            config = await window.electronAPI.getConfig();
+            console.log('Config reloaded after Gemini update:', { 
+              hasApiKey: !!config.gemini_api_key
+            });
+          } catch (updateError) {
+            console.error('Failed to update Gemini configuration:', updateError);
+            throw new Error(`Failed to update Gemini API configuration: ${updateError.message}`);
+          }
+        }
+        
+        // Final validation for Gemini
+        if (!config.gemini_api_key || config.gemini_api_key.trim() === '') {
+          throw new Error('Gemini API key is empty or invalid after configuration loading');
         }
       }
       
-      // Final validation check
-      if (!config.deepseek_api_key || config.deepseek_api_key.trim() === '') {
-        throw new Error('DeepSeek API key is empty or invalid after configuration loading');
-      }
+      console.log(`${selectedProvider.toUpperCase()} config validation successful, API key is ready`);
       
-      console.log('DeepSeek config validation successful, API key is ready');
+      // Update current provider state for button display
+      setCurrentProvider(selectedProvider);
+      
       return config;
     } catch (error) {
-      console.error('DeepSeek configuration validation failed:', error);
+      console.error('AI configuration validation failed:', error);
       
       // Set user-friendly error message
+      const provider = (await window.electronAPI.getConfig()).selected_provider || 'deepseek';
       const errorMessage = error.message.includes('Failed to update') 
-        ? 'Failed to configure DeepSeek API. Please check your settings and try again.'
-        : 'DeepSeek API key is not configured. Please go to Settings to configure it.';
+        ? `Failed to configure ${provider.toUpperCase()} API. Please check your settings and try again.`
+        : `${provider.toUpperCase()} API key is not configured. Please go to Settings to configure it.`;
       
       setError(errorMessage);
       throw error; // Re-throw to stop execution
     }
   };
 
-  // Configuration check function (deprecated - use validateAndLoadDeepSeekConfig instead)
-  const checkDeepSeekConfiguration = async (): Promise<boolean> => {
+  // Legacy function name for backward compatibility
+  const validateAndLoadDeepSeekConfig = validateAndLoadAIConfig;
+
+  // Configuration check function (deprecated - use validateAndLoadAIConfig instead)
+  const checkAIConfiguration = async (): Promise<boolean> => {
     try {
-      await validateAndLoadDeepSeekConfig();
+      await validateAndLoadAIConfig();
       return true;
     } catch (error) {
       return false;
     }
   };
 
-  const handleAskDeepSeek = async (newContent?: string) => {
+  // Configuration check function (deprecated - use validateAndLoadAIConfig instead)
+  const checkDeepSeekConfiguration = checkAIConfiguration;
+
+  const handleAskAI = async (newContent?: string) => {
     let contentToProcess = newContent;
     
     // If no specific content provided, gather unprocessed segments
@@ -420,8 +481,8 @@ const InterviewPage: React.FC = () => {
       return;
     }
 
-    // Check DeepSeek configuration before proceeding
-    const isConfigured = await checkDeepSeekConfiguration();
+    // Check AI configuration before proceeding
+    const isConfigured = await checkAIConfiguration();
     if (!isConfigured) {
       return;
     }
@@ -429,7 +490,7 @@ const InterviewPage: React.FC = () => {
     setIsLoading(true);
     try {
       // Validate and load configuration using centralized function
-      const config = await validateAndLoadDeepSeekConfig();
+      const config = await validateAndLoadAIConfig();
       console.log('handleGenerateSmartQuestions: Configuration validated, preparing API call...');
 
       // Build messages array with system prompt if available
@@ -449,14 +510,16 @@ const InterviewPage: React.FC = () => {
       // Add current user content
       messages.push({ role: 'user', content: contentToProcess });
 
-      // Use DeepSeek Chat instead of OpenAI
-      console.log('handleAskDeepSeek: Making API call with config:', { 
-        hasApiKey: !!config.deepseek_api_key,
-        apiKeyPreview: config.deepseek_api_key ? config.deepseek_api_key.substring(0, 10) + '...' : 'missing'
+      // Use selected AI provider (DeepSeek, Gemini, or OpenAI)
+      console.log('handleAskAI: Making API call with config:', { 
+        provider: config.selected_provider,
+        hasDeepseekKey: !!config.deepseek_api_key,
+        hasGeminiKey: !!config.gemini_api_key
       });
       console.log('handleGenerateSmartQuestions: Making API call with config:', { 
-        hasApiKey: !!config.deepseek_api_key,
-        apiKeyPreview: config.deepseek_api_key ? config.deepseek_api_key.substring(0, 10) + '...' : 'missing'
+        provider: config.selected_provider,
+        hasDeepseekKey: !!config.deepseek_api_key,
+        hasGeminiKey: !!config.gemini_api_key
       });
       const response = await window.electronAPI.callDeepSeek({
         config: config,
@@ -490,22 +553,24 @@ const InterviewPage: React.FC = () => {
         console.log('Failed to update PiP window:', error);
       }
     } catch (error) {
-      console.error('DeepSeek Chat Error:', error);
-      let errorMessage = 'Failed to get response from DeepSeek Chat.';
+      console.error('AI Chat Error:', error);
+      let errorMessage = 'Failed to get response from AI.';
       
       if (error instanceof Error) {
-        if (error.message.includes('API key')) {
-          errorMessage = 'DeepSeek API key is missing or invalid. Please check your settings.';
+        if (error.message.includes('Gemini Model Not Found') || error.message.includes('Gemini Bad Request') || error.message.includes('Gemini Access Denied')) {
+            errorMessage = error.message;
+        } else if (error.message.includes('API key')) {
+          errorMessage = `${currentProvider.toUpperCase()} API key is missing or invalid. Please check your settings.`;
         } else if (error.message.includes('timeout')) {
           errorMessage = 'Request timed out. Please try with shorter content.';
         } else if (error.message.includes('Network')) {
           errorMessage = 'Network error. Please check your internet connection.';
         } else if (error.message.includes('404')) {
-          errorMessage = 'DeepSeek API endpoint not found. Please check your API configuration.';
+          errorMessage = `${currentProvider.toUpperCase()} API endpoint or model not found. Please check your configuration.`;
         } else if (error.message.includes('401')) {
-          errorMessage = 'Authentication failed. Please check your DeepSeek API key.';
+          errorMessage = `Authentication failed. Please check your ${currentProvider.toUpperCase()} API key.`;
         } else {
-          errorMessage = `DeepSeek API Error: ${error.message}`;
+          errorMessage = `${currentProvider.toUpperCase()} API Error: ${error.message}`;
         }
       }
       
@@ -530,15 +595,15 @@ const InterviewPage: React.FC = () => {
         return;
       }
 
-      // Check DeepSeek configuration before proceeding
-      const isConfigured = await checkDeepSeekConfiguration();
+      // Check AI configuration before proceeding
+      const isConfigured = await checkAIConfiguration();
       if (!isConfigured) {
         setIsLoading(false);
         return;
       }
 
       // Validate and load configuration using centralized function
-      const config = await validateAndLoadDeepSeekConfig();
+      const config = await validateAndLoadAIConfig();
 
       const smartQuestionsPrompt = `
         Based on the interview context below (if any), generate 5-7 smart, strategic questions that a Senior Digital Marketing Specialist (Google/Meta Ads Expert) should ask this client right now.
@@ -598,11 +663,11 @@ const InterviewPage: React.FC = () => {
     }
   };
 
-  const handleAskDeepSeekStable = useCallback(
+  const handleAskAIStable = useCallback(
     async (newContent: string) => {
-      await handleAskDeepSeek(newContent);
+      await handleAskAI(newContent);
     },
-    [handleAskDeepSeek]
+    [handleAskAI]
   );
 
   const [interimTranscript, setInterimTranscript] = useState('');
@@ -664,7 +729,7 @@ const InterviewPage: React.FC = () => {
             setTranscriptSegments((prev) =>
               prev.map((s) => (unprocessed.some((u) => u.id === s.id) ? { ...s, isProcessed: true } : s))
             );
-            handleAskDeepSeekStable(newContent);
+            handleAskAIStable(newContent);
           }
         }
       }
@@ -684,7 +749,7 @@ const InterviewPage: React.FC = () => {
     };
   }, [
     isDeepSeekChatEnabled,
-    handleAskDeepSeekStable,
+    handleAskAIStable,
     setInterimTranscript,
   ]);
 
@@ -712,8 +777,13 @@ const InterviewPage: React.FC = () => {
           const audioTracks = stream.getAudioTracks();
           if (audioTracks.length > 0) {
             console.log(`Screen share stream has ${audioTracks.length} audio tracks`);
-            audioStream = stream;
+            
+            // Create a separate audio stream from the screen share audio tracks
+            // This ensures we have a clean audio stream for transcription
+            audioStream = new MediaStream(audioTracks);
             screenPreviewStream = stream;
+            
+            console.log('Created dedicated audio stream from screen share for transcription');
           } else {
             console.warn('Screen share stream requested with audio but no audio tracks found');
             setError(
@@ -758,6 +828,20 @@ const InterviewPage: React.FC = () => {
         throw new Error('Failed to create audio stream');
       }
 
+      // Enhanced validation for screen share audio streams
+      console.log(`Audio stream created with ${audioStream.getAudioTracks().length} audio tracks`);
+      if (recordingType === 'screen' && audioStream.getAudioTracks().length > 0) {
+        const track = audioStream.getAudioTracks()[0];
+        const settings = track.getSettings();
+        console.log('Screen share audio track settings:', {
+          sampleRate: settings.sampleRate,
+          channelCount: settings.channelCount,
+          echoCancellation: settings.echoCancellation,
+          noiseSuppression: settings.noiseSuppression,
+          autoGainControl: settings.autoGainControl,
+        });
+      }
+
       // Validate stream health
       const isValid = await AudioErrorHandler.validateAudioStream(audioStream);
       if (!isValid) {
@@ -769,6 +853,13 @@ const InterviewPage: React.FC = () => {
         const audioTrack = audioStream.getAudioTracks()[0];
         const settings = audioTrack.getSettings();
         console.log('Screen share audio settings:', settings);
+        console.log('Screen share audio track details:');
+        console.log('- ID:', audioTrack.id);
+        console.log('- Label:', audioTrack.label);
+        console.log('- Kind:', audioTrack.kind);
+        console.log('- Enabled:', audioTrack.enabled);
+        console.log('- Muted:', audioTrack.muted);
+        console.log('- Ready state:', audioTrack.readyState);
 
         // More lenient validation for screenshare audio
         if (settings.sampleRate && settings.sampleRate < 8000) {
@@ -871,6 +962,27 @@ const InterviewPage: React.FC = () => {
       const workletManager = new AudioWorkletManager(context);
       setWorkletManager(workletManager);
 
+      // Enhanced configuration for screen share audio
+      if (recordingType === 'screen') {
+        console.log('Configuring audio processing for screen share transcription');
+        // Ensure proper audio settings for screen share
+        audioStream.getAudioTracks().forEach(track => {
+          if (track.kind === 'audio') {
+            console.log(`Configuring screen share audio track: ${track.label}`);
+            // Apply settings that work well for transcription
+            if (typeof track.applyConstraints === 'function') {
+              track.applyConstraints({
+                echoCancellation: false, // Disable for screen share to avoid artifacts
+                noiseSuppression: true,  // Keep noise suppression for better quality
+                autoGainControl: false,  // Disable to preserve original audio levels
+              }).catch(err => {
+                console.warn('Could not apply screen share audio constraints:', err);
+              });
+            }
+          }
+        });
+      }
+
       // Initialize Audio Worklet - NO FALLBACK to prevent echoing
       let workletInitialized = false;
       try {
@@ -894,6 +1006,13 @@ const InterviewPage: React.FC = () => {
             );
 
             const audioData = processAudioForDeepgram(samples);
+
+            // Enhanced logging for screen share audio
+            if (recordingType === 'screen') {
+              const sampleSum = samples.reduce((sum, sample) => sum + Math.abs(sample), 0);
+              const avgAmplitude = sampleSum / samples.length;
+              console.log(`Screen share audio processing: ${samples.length} samples, avg amplitude: ${avgAmplitude.toFixed(6)}`);
+            }
 
             // Only send if we have actual audio data
             if (audioData.length > 0) {
@@ -1236,7 +1355,10 @@ const InterviewPage: React.FC = () => {
             <FaRobot
               className={`text-xl ${isDeepSeekChatEnabled ? 'text-purple-400 pulse' : 'text-gray-400'}`}
             />
-            <span className="text-white font-medium">DeepSeek Chat</span>
+            <span className="text-white font-medium">
+              {currentProvider === 'gemini' ? 'Gemini Chat' : 
+               currentProvider === 'openai' ? 'GPT Chat' : 'DeepSeek Chat'}
+            </span>
           </div>
         </label>
 
@@ -1519,14 +1641,14 @@ const InterviewPage: React.FC = () => {
           </div>
           <div className="flex justify-between space-x-2">
             <button
-              onClick={debounce(() => handleAskDeepSeek(), 300)}
+              onClick={debounce(() => handleAskAI(), 300)}
               disabled={!currentText || isLoading}
               className="btn btn-primary flex-1 flex items-center justify-center space-x-2 transition-all duration-300 hover:scale-105 hover:shadow-lg disabled:opacity-50 pulse-on-hover"
-              aria-label={isLoading ? 'AI is processing' : 'Ask DeepSeek AI for insights'}
+              aria-label={isLoading ? 'AI is processing' : `Ask ${currentProvider.charAt(0).toUpperCase() + currentProvider.slice(1)} AI for insights`}
               aria-busy={isLoading}
             >
               <FaRobot className={isLoading ? 'animate-spin' : 'pulse'} />
-              <span>{isLoading ? 'Thinking...' : 'Ask DeepSeek'}</span>
+              <span>{isLoading ? 'Thinking...' : `Ask ${currentProvider.charAt(0).toUpperCase() + currentProvider.slice(1)}`}</span>
             </button>
             <button
               onClick={handleGenerateSmartQuestions}

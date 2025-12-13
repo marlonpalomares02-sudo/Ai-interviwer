@@ -528,7 +528,7 @@ ipcMain.handle('test-api-config', async (event, config) => {
         return { success: false, error: 'DeepSeek API key is missing or invalid. Please check your settings.' };
       }
 
-      const baseUrl = normalizeApiBaseUrl(config.deepseek_api_base, 'https://api.deepseek.com/v1');
+      const baseUrl = normalizeApiBaseUrl(config.deepseek_api_base, 'https://api.deepseek.com', false);
       console.log('Normalized base URL:', baseUrl);
 
       const axiosInstance = axios.create({
@@ -613,41 +613,167 @@ ipcMain.handle('callOpenAI', async (event, { config, messages, signal }) => {
   }
 });
 
-ipcMain.handle('callDeepSeek', async (event, { config, messages, signal }) => {
+ipcMain.handle('callDeepSeek', async (event, { config: clientConfig, messages, signal }) => {
   try {
-    const selectedProvider = config.selected_provider || 'deepseek';
+    // Reload config from store to ensure we have the latest settings
+    // But preserve any client-side overrides (like temporary API keys if we ever use them)
+    const storeConfig = store.get('config');
+    const config = { ...storeConfig, ...clientConfig };
     
-    if (selectedProvider === 'gemini') {
-      if (!config.gemini_api_key) {
+    // Explicitly check for selected_provider in both store and client config
+    // Client config takes precedence if set, otherwise store config, otherwise default
+    let selectedProvider = clientConfig.selected_provider || storeConfig.selected_provider || 'deepseek';
+    
+    console.log(`AI Request: Provider=${selectedProvider}, Model=${config.gemini_model || config.deepseek_model || config.gpt_model}`);
+
+    // Helper function to handle provider fallback
+    const handleProviderFallback = async (error: any, originalProvider: string) => {
+      console.log(`Provider ${originalProvider} failed, attempting fallback...`);
+      
+      // Check if Gemini rate limit exceeded
+      if (originalProvider === 'gemini' && error.message && error.message.includes('429')) {
+        console.log('Gemini rate limit exceeded, falling back to DeepSeek...');
+        
+        // Try DeepSeek fallback
+        if (config.deepseek_api_key) {
+          selectedProvider = 'deepseek';
+          console.log('Falling back to DeepSeek provider');
+          
+          // Update the config temporarily for fallback
+          const fallbackConfig = { ...config, selected_provider: 'deepseek' };
+          
+          // Retry with DeepSeek
+          return await makeAIRequest(fallbackConfig, messages, signal);
+        } else {
+          throw new Error('Gemini rate limit exceeded and no DeepSeek API key available for fallback');
+        }
+      }
+      
+      // If not a rate limit or no fallback available, throw the original error
+      throw error;
+    };
+
+    // Main AI request function
+    const makeAIRequest = async (reqConfig: any, reqMessages: any[], reqSignal?: AbortSignal) => {
+      const currentProvider = reqConfig.selected_provider || selectedProvider;
+      
+      if (currentProvider === 'gemini') {
+      if (!reqConfig.gemini_api_key) {
         throw new Error('Gemini API Key is missing');
       }
 
-      const { GoogleGenerativeAI } = require('@google/generative-ai');
-      const genAI = new GoogleGenerativeAI(config.gemini_api_key);
-      const model = genAI.getGenerativeModel({ 
-        model: config.gemini_model || 'gemini-1.5-flash',
-        systemInstruction: messages.find((m: any) => m.role === 'system')?.content || ''
+      console.log('Gemini Request Start', { 
+        model: reqConfig.gemini_model || 'gemini-1.5-flash',
+        keyLength: reqConfig.gemini_api_key ? reqConfig.gemini_api_key.length : 0 
       });
 
-      // Convert messages to Gemini format
-      // Filter out system message as it's handled above
-      // Combine consecutive user/assistant messages if needed, but Gemini handles history well
-      const history = messages
-        .filter((m: any) => m.role !== 'system')
-        .slice(0, -1) // All except last message
-        .map((m: any) => ({
-          role: m.role === 'assistant' ? 'model' : 'user',
-          parts: [{ text: m.content }],
-        }));
+      const { GoogleGenerativeAI } = require('@google/generative-ai');
+      
+      const apiKey = reqConfig.gemini_api_key.trim();
+      const genAI = new GoogleGenerativeAI(apiKey);
+      
+      const systemMessage = reqMessages.find((m: any) => m.role === 'system');
+      let modelName = (reqConfig.gemini_model || 'gemini-1.5-flash-001').trim();
+      
+      // Safety fallback for common typos or empty strings
+      if (!modelName || modelName === 'gemini-1.5-flash') {
+         modelName = 'gemini-1.5-flash-001'; // Force specific version which is more stable
+      }
+      
+      console.log(`Using Gemini Model: '${modelName}'`);
+      
+      const model = genAI.getGenerativeModel({ 
+        model: modelName,
+        systemInstruction: systemMessage ? systemMessage.content : undefined
+      });
+
+      // Helper to convert OpenAI content to Gemini parts
+      const convertToGeminiParts = (content: any) => {
+        if (typeof content === 'string') {
+          return [{ text: content }];
+        }
+        if (Array.isArray(content)) {
+          return content.map((item: any) => {
+            if (item.type === 'text') {
+              return { text: item.text };
+            }
+            if (item.type === 'image_url') {
+              const imageUrl = item.image_url.url;
+              if (imageUrl.startsWith('data:')) {
+                const matches = imageUrl.match(/^data:([^;]+);base64,(.+)$/);
+                if (matches) {
+                  return {
+                    inlineData: {
+                      mimeType: matches[1],
+                      data: matches[2]
+                    }
+                  };
+                }
+              }
+              // Fallback for non-base64 or invalid URLs (though KnowledgeBase uses data URLs)
+              return { text: '' }; 
+            }
+            return { text: '' };
+          }).filter((part: any) => part.text !== '' || part.inlineData);
+        }
+        return [{ text: '' }];
+      };
+
+      // Filter out system message and process history
+      const rawMessages = messages.filter((m: any) => m.role !== 'system');
+      
+      if (rawMessages.length === 0) {
+          throw new Error('No messages provided for Gemini generation');
+      }
+
+      // Merge consecutive messages with the same role
+      const mergedMessages: any[] = [];
+      let currentMessage: any = null;
+
+      for (const msg of rawMessages) {
+        const role = msg.role === 'assistant' ? 'model' : 'user';
+        const parts = convertToGeminiParts(msg.content);
+
+        if (currentMessage && currentMessage.role === role) {
+          currentMessage.parts.push(...parts);
+        } else {
+          if (currentMessage) {
+            mergedMessages.push(currentMessage);
+          }
+          currentMessage = { role, parts };
+        }
+      }
+      if (currentMessage) {
+        mergedMessages.push(currentMessage);
+      }
+
+      // Ensure the sequence starts with 'user' if required (usually safer)
+      // and ensure alternating roles (mergedMessages should already have alternating roles by logic above)
+
+      if (mergedMessages.length === 0) {
+        throw new Error('No valid messages for Gemini generation');
+      }
+
+      // The last message is the prompt for sendMessage
+      const lastMessage = mergedMessages[mergedMessages.length - 1];
+      const history = mergedMessages.slice(0, -1);
+
+      // Verify history doesn't have empty parts
+      const validHistory = history.map((m: any) => ({
+        role: m.role,
+        parts: m.parts.length > 0 ? m.parts : [{ text: ' ' }] // Gemini doesn't like empty messages
+      }));
 
       const chat = model.startChat({
-        history: history,
+        history: validHistory,
       });
 
-      const lastMessage = messages[messages.length - 1];
-      const result = await chat.sendMessage(lastMessage.content);
+      console.log('Sending message to Gemini (parts count):', lastMessage.parts.length);
+      
+      const result = await chat.sendMessage(lastMessage.parts);
       const response = await result.response;
       const text = response.text();
+      console.log('Gemini Response received');
 
       return { content: text };
     } else if (selectedProvider === 'openai') {
@@ -677,7 +803,7 @@ ipcMain.handle('callDeepSeek', async (event, { config, messages, signal }) => {
     } else {
       // Existing DeepSeek logic
       const deepseekApi = axios.create({
-        baseURL: normalizeApiBaseUrl(config.deepseek_api_base, 'https://api.deepseek.com/v1'),
+        baseURL: normalizeApiBaseUrl(config.deepseek_api_base, 'https://api.deepseek.com', false),
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${config.deepseek_api_key}`,
@@ -696,6 +822,19 @@ ipcMain.handle('callDeepSeek', async (event, { config, messages, signal }) => {
         throw new Error('Unexpected API response structure from DeepSeek');
       }
       return { content: response.data.choices[0].message.content };
+    }
+    };
+    
+    // Execute the main request
+    try {
+      return await makeAIRequest(config, messages, signal);
+    } catch (error) {
+      // Handle provider fallback for specific errors
+      if (selectedProvider === 'gemini' && error.message && error.message.includes('429')) {
+        console.log('Gemini rate limit detected, attempting fallback to DeepSeek...');
+        return await handleProviderFallback(error, 'gemini');
+      }
+      throw error;
     }
   } catch (error) {
     console.error('DeepSeek AI Call Error:', error);
@@ -718,39 +857,50 @@ ipcMain.handle('callDeepSeek', async (event, { config, messages, signal }) => {
             errorMessage += 'Access forbidden - Check API permissions';
             break;
           case 404:
-            errorMessage += 'API endpoint not found - Check API configuration';
+            errorMessage += 'Model or Endpoint not found';
             break;
           case 429:
-            errorMessage += 'Rate limit exceeded - Please try again later';
+            errorMessage += 'Rate limit exceeded';
             break;
           case 500:
-            errorMessage += 'Server error - DeepSeek service may be down';
+            errorMessage += 'Server error';
             break;
           case 503:
-            errorMessage += 'Service unavailable - Please try again later';
+            errorMessage += 'Service unavailable';
             break;
           default:
-            errorMessage += errorData?.error?.message || errorData?.error || 'Unknown API error';
+            errorMessage += errorData?.error?.message || error.message;
         }
         
         return { error: errorMessage };
+      } else if (error.request) {
+        return { error: 'Network error - No response received from API server' };
+      } else {
+        return { error: `Request setup error: ${error.message}` };
       }
-      
-      if (error.request) {
-        return { error: 'Network Error: Unable to reach DeepSeek API. Please check your internet connection.' };
-      }
-      
-      return { error: `Network Error: ${error.message}` };
     }
-    
-    if (error instanceof Error) {
-      if (error.message.includes('API key')) {
-        return { error: 'DeepSeek API key is missing or invalid' };
-      }
-      return { error: error.message };
+
+    // Handle Gemini/GoogleGenerativeAI specific errors
+    if (error.message && (error.message.includes('GoogleGenerativeAI') || error.message.includes('[404]'))) {
+       console.error('Gemini API Error:', error);
+       if (error.message.includes('429')) {
+         // Rate limit exceeded - this should have been caught by fallback logic
+         return { error: `Gemini Rate Limit Exceeded (429). You've exceeded your current quota. The system attempted to fallback to DeepSeek but no fallback API key was available. Please check your plan and billing details at https://ai.google.dev/gemini-api/docs/rate-limits` };
+       }
+       if (error.message.includes('404')) {
+         // Auto-retry suggestion logic - use the model from the error context
+         const attemptedModel = error.message.match(/models\/([^:]+)/)?.[1] || 'gemini-1.5-flash';
+         return { error: `Gemini Model Not Found (404). The model '${attemptedModel}' is not available. The system automatically tried to switch to 'gemini-1.5-flash-001' but failed. Please check your API key permissions.` };
+       }
+       if (error.message.includes('400')) {
+         return { error: `Gemini Bad Request (400). Invalid API key or request format.` };
+       }
+       if (error.message.includes('403')) {
+          return { error: `Gemini Access Denied (403). API key may be invalid or restricted.` };
+       }
     }
-    
-    return { error: 'Unknown error occurred with DeepSeek API' };
+
+    return { error: error.message || 'Unknown error occurred' };
   }
 });
 
@@ -775,14 +925,15 @@ ipcMain.handle('get-desktop-sources', async () => {
 
 function normalizeApiBaseUrl(
   url: string,
-  defaultUrl: string = 'https://api.openai.com/v1'
+  defaultUrl: string = 'https://api.openai.com/v1',
+  forceV1: boolean = true
 ): string {
   if (!url) return defaultUrl;
   url = url.trim();
   if (!url.startsWith('http://') && !url.startsWith('https://')) {
     url = 'https://' + url;
   }
-  if (!url.endsWith('/v1')) {
+  if (forceV1 && !url.endsWith('/v1')) {
     url = url.endsWith('/') ? url + 'v1' : url + '/v1';
   }
   return url;

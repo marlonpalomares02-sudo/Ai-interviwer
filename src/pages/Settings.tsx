@@ -26,6 +26,7 @@ const Settings: React.FC = () => {
   const [openaiApiBase, setOpenaiApiBase] = useState('');
   const [deepseekApiBase, setDeepseekApiBase] = useState('');
   const [deepseekApiModel, setDeepseekApiModel] = useState('deepseek-chat');
+  const [geminiApiModel, setGeminiApiModel] = useState('gemini-1.5-flash');
   const [selectedProvider, setSelectedProvider] = useState<'deepseek' | 'gemini' | 'openai'>('deepseek');
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [apiCallMethod, setApiCallMethod] = useState<'direct' | 'proxy'>('direct');
@@ -55,6 +56,7 @@ const Settings: React.FC = () => {
       setOpenaiApiBase(config.api_base || '');
       setDeepseekApiModel(config.deepseek_model || 'deepseek-chat');
       setDeepseekApiBase(config.deepseek_api_base || '');
+      setGeminiApiModel(config.gemini_model || 'gemini-1.5-flash');
       setSelectedProvider(config.selected_provider || 'deepseek');
       setApiCallMethod(config.api_call_method || 'direct');
       setPrimaryLanguage(config.primaryLanguage || 'auto');
@@ -86,6 +88,7 @@ const Settings: React.FC = () => {
         api_base: openaiApiBase,
         deepseek_model: deepseekApiModel,
         deepseek_api_base: deepseekApiBase,
+        gemini_model: geminiApiModel,
         selected_provider: selectedProvider,
         api_call_method: apiCallMethod,
         primaryLanguage: primaryLanguage,
@@ -127,6 +130,15 @@ const Settings: React.FC = () => {
     setAiSystemPrompt(prompt);
   };
 
+  const handleGeminiModelChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const value = e.target.value;
+    if (value === 'custom') {
+      setGeminiApiModel('');
+    } else {
+      setGeminiApiModel(value);
+    }
+  };
+
   const testAPIConfig = async () => {
     try {
       setTestResult('Testing...');
@@ -151,6 +163,7 @@ const Settings: React.FC = () => {
         api_base: openaiApiBase || savedConfig.api_base || '',
         deepseek_model: deepseekApiModel || savedConfig.deepseek_model || 'deepseek-chat',
         deepseek_api_base: deepseekApiBase || savedConfig.deepseek_api_base || '',
+        gemini_model: geminiApiModel || savedConfig.gemini_model || 'gemini-1.5-flash',
         selected_provider: selectedProvider || savedConfig.selected_provider || 'deepseek',
       };
       
@@ -243,16 +256,46 @@ const Settings: React.FC = () => {
       )}
 
       {selectedProvider === 'gemini' && (
-        <div className="mb-4">
-          <label className="label">Gemini API Key</label>
-          <input
-            type="password"
-            value={geminiApiKey}
-            onChange={(e) => setGeminiApiKey(e.target.value)}
-            className="input input-bordered w-full"
-            placeholder="Enter your Google Gemini API Key"
-          />
-        </div>
+        <>
+          <div className="mb-4">
+            <label className="label">Gemini API Key</label>
+            <input
+              type="password"
+              value={geminiApiKey}
+              onChange={(e) => setGeminiApiKey(e.target.value)}
+              className="input input-bordered w-full"
+              placeholder="Enter your Google Gemini API Key"
+            />
+          </div>
+          <div className="mb-4">
+            <label className="label">Gemini Model</label>
+            <select
+              value={['gemini-1.5-flash-001', 'gemini-1.5-pro', 'gemini-2.0-flash-exp'].includes(geminiApiModel) ? geminiApiModel : 'custom'}
+              onChange={handleGeminiModelChange}
+              className="select select-bordered w-full mb-2"
+            >
+              <option value="gemini-1.5-flash-001">Gemini 1.5 Flash (Recommended)</option>
+              <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
+              <option value="gemini-2.0-flash-exp">Gemini 2.0 Flash (Experimental)</option>
+              <option value="custom">Custom Model ID...</option>
+            </select>
+            
+            {!['gemini-1.5-flash-001', 'gemini-1.5-pro', 'gemini-2.0-flash-exp'].includes(geminiApiModel) && (
+              <input
+                type="text"
+                value={geminiApiModel}
+                onChange={(e) => setGeminiApiModel(e.target.value)}
+                className="input input-bordered w-full"
+                placeholder="Enter custom model ID (e.g., gemini-1.0-pro)"
+              />
+            )}
+            <label className="label">
+              <span className="label-text-alt">
+                Select a preset or enter a specific model ID manually.
+              </span>
+            </label>
+          </div>
+        </>
       )}
 
       {selectedProvider === 'openai' && (
